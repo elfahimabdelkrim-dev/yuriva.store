@@ -5,34 +5,42 @@
 //   GOOGLE_SERVICE_ACCOUNT_EMAIL  — required (also accepts GOOGLE_CLIENT_EMAIL)
 //   GOOGLE_SHEET_ID               — required (spreadsheet ID from URL)
 //
-// Root-cause fix: gtoken (used internally by googleapis JWT auth) hardcodes
-// the deprecated https://www.googleapis.com/oauth2/v4/token endpoint, which
-// causes "Premature close" errors. We bypass gtoken entirely:
-//   1. Sign the JWT ourselves with Node's built-in crypto module
-//   2. Exchange for a token at the correct https://oauth2.googleapis.com/token
-//   3. Set the token directly on an OAuth2Client — no gtoken involved
+// Root-cause fix #1: gtoken hardcodes deprecated v4/token endpoint.
+//   We bypass gtoken: sign JWT with Node crypto, exchange at the correct endpoint.
+// Root-cause fix #2: hardcoded sheet name "Feuille1" fails when tab has a space.
+//   We fetch the first sheet title dynamically and quote it properly.
 
 import crypto from "crypto";
 import type { Order } from "@/types";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-/** Base64url encode a Buffer (safe for TS — avoids "base64url" encoding name) */
 function toBase64Url(buf: Buffer): string {
   return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 }
 
-/** Normalize a raw private key from env */
 function normalizePrivateKey(raw: string): string {
   return raw
-    .replace(/\\n/g, "\n")              // JSON-escaped newlines → real newlines
-    .replace(/^["'\s]+|["'\s]+$/g, ""); // Strip surrounding quotes / whitespace
+    .replace(/\\n/g, "\n")
+    .replace(/^["'\s]+|["'\s]+$/g, "");
 }
 
-/** Returns GOOGLE_SERVICE_ACCOUNT_EMAIL or legacy GOOGLE_CLIENT_EMAIL */
 function getServiceEmail(): string | undefined {
   return process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || process.env.GOOGLE_CLIENT_EMAIL;
 }
+
+/** Quote a sheet title for A1 notation — handles spaces and apostrophes */
+function quoteSheet(title: string): string {
+  return `'${title.replace(/'/g, "''")}'`;
+}
+
+// ── Sheet headers (13 columns) ─────────────────────────────────────────────
+
+const HEADERS = [
+  "رقم الطلب", "التاريخ", "الاسم الكامل", "الهاتف", "المدينة",
+  "العنوان", "المنتج", "المقاس", "الكمية", "المجموع",
+  "الحالة", "ملاحظة", "المصدر",
+];
 
 // ── Retry helper ───────────────────────────────────────────────────────────
 
@@ -58,14 +66,14 @@ async function fetchWithRetry(
   throw lastErr;
 }
 
-// ── JWT → Access Token (bypasses gtoken/v4 endpoint) ──────────────────────
+// ── JWT → Access Token ─────────────────────────────────────────────────────
 
 async function fetchGoogleAccessToken(email: string, privateKey: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     iss: email,
     scope: "https://www.googleapis.com/auth/spreadsheets",
-    aud: "https://oauth2.googleapis.com/token", // correct (non-deprecated) endpoint
+    aud: "https://oauth2.googleapis.com/token",
     exp: now + 3600,
     iat: now,
   };
@@ -99,7 +107,7 @@ async function fetchGoogleAccessToken(email: string, privateKey: string): Promis
   }
 
   const data = await resp.json() as { access_token?: string };
-  if (!data.access_token) throw new Error("google_token_error:empty_response:No access_token in response");
+  if (!data.access_token) throw new Error("google_token_error:empty_response:No access_token");
   return data.access_token;
 }
 
@@ -128,7 +136,10 @@ interface SyncConfig {
   serviceEmail?: string;
 }
 
-async function getAuthAndSheets(config?: SyncConfig) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type SheetsClient = any;
+
+async function getAuthAndSheets(config?: SyncConfig): Promise<{ sheets: SheetsClient; sheetId: string }> {
   const privateKeyRaw = process.env.GOOGLE_PRIVATE_KEY;
   if (!privateKeyRaw) throw new Error("GOOGLE_PRIVATE_KEY missing");
 
@@ -140,10 +151,9 @@ async function getAuthAndSheets(config?: SyncConfig) {
 
   const privateKey = normalizePrivateKey(privateKeyRaw);
   if (!privateKey.includes("-----BEGIN")) {
-    throw new Error("GOOGLE_PRIVATE_KEY invalid format — missing -----BEGIN PRIVATE KEY-----");
+    throw new Error("GOOGLE_PRIVATE_KEY invalid format");
   }
 
-  // Fetch token via correct endpoint, bypassing gtoken entirely
   const accessToken = await fetchGoogleAccessToken(email, privateKey);
 
   const { google } = await import("googleapis");
@@ -154,20 +164,60 @@ async function getAuthAndSheets(config?: SyncConfig) {
   return { sheets, sheetId };
 }
 
+/** Fetch the actual title of the first sheet tab */
+async function getFirstSheetTitle(sheets: SheetsClient, spreadsheetId: string): Promise<string> {
+  try {
+    const meta = await sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: "sheets.properties.title",
+    });
+    const title = meta.data?.sheets?.[0]?.properties?.title as string | undefined;
+    return title || "Sheet1";
+  } catch {
+    return "Sheet1";
+  }
+}
+
+/** Ensure header row exists; writes if the sheet is empty */
+async function ensureHeaders(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  sheetTitle: string
+): Promise<void> {
+  const range = `${quoteSheet(sheetTitle)}!A1:M1`;
+  const existing = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  const rows = existing.data?.values as string[][] | undefined;
+  if (!rows || rows.length === 0 || !rows[0]?.length) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: [HEADERS] },
+    });
+  }
+}
+
 // ── Test connection ────────────────────────────────────────────────────────
 
 export interface TestResult {
   ok: boolean;
   error?: string;
+  sheetTitle?: string;
   diagnostics: {
     authConfigured: boolean;
     tokenFetchAttempted: boolean;
     spreadsheetAccess: boolean;
+    writeAccess: boolean;
   };
 }
 
 export async function testConnection(config?: SyncConfig): Promise<TestResult> {
-  const diag = { authConfigured: false, tokenFetchAttempted: false, spreadsheetAccess: false };
+  const diag = {
+    authConfigured: false,
+    tokenFetchAttempted: false,
+    spreadsheetAccess: false,
+    writeAccess: false,
+  };
 
   try {
     diag.authConfigured = true;
@@ -175,101 +225,175 @@ export async function testConnection(config?: SyncConfig): Promise<TestResult> {
 
     const { sheets, sheetId } = await getAuthAndSheets(config);
 
-    // Retry spreadsheet.get for transient network errors
-    for (let attempt = 0; attempt <= 2; attempt++) {
-      try {
-        await sheets.spreadsheets.get({ spreadsheetId: sheetId });
-        diag.spreadsheetAccess = true;
-        return { ok: true, diagnostics: diag };
-      } catch (e: unknown) {
-        const msg = String(e);
-        const retryable = RETRYABLE.some((s) => msg.includes(s));
-        if (retryable && attempt < 2) {
-          await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
-          continue;
-        }
-        throw e;
+    // Read test — fetch spreadsheet metadata (also gives us the real sheet title)
+    let sheetTitle = "Sheet1";
+    try {
+      const meta = await sheets.spreadsheets.get({ spreadsheetId: sheetId });
+      diag.spreadsheetAccess = true;
+      sheetTitle = meta.data?.sheets?.[0]?.properties?.title || "Sheet1";
+    } catch (e: unknown) {
+      const msg = String(e);
+      if (msg.includes("403") || msg.includes("PERMISSION_DENIED")) {
+        return {
+          ok: false,
+          error: `Service Account has no read permission. Share the sheet with: ${getServiceEmail() ?? "service account"}`,
+          diagnostics: diag,
+        };
       }
+      throw e;
     }
-    throw new Error("Max retries exceeded for spreadsheet.get");
+
+    // Write test — append a test row then clear it
+    const testRange = `${quoteSheet(sheetTitle)}!A1`;
+    try {
+      const appendResp = await sheets.spreadsheets.values.append({
+        spreadsheetId: sheetId,
+        range: testRange,
+        valueInputOption: "USER_ENTERED",
+        insertDataOption: "INSERT_ROWS",
+        requestBody: {
+          values: [["TEST", new Date().toISOString(), "YURIVA write test"]],
+        },
+      });
+      // Clear the test row we just wrote
+      const updatedRange = appendResp.data?.updates?.updatedRange as string | undefined;
+      if (updatedRange) {
+        await sheets.spreadsheets.values.clear({ spreadsheetId: sheetId, range: updatedRange });
+      }
+      diag.writeAccess = true;
+    } catch (e: unknown) {
+      const msg = String(e);
+      if (msg.includes("403") || msg.includes("PERMISSION_DENIED")) {
+        return {
+          ok: false,
+          error: `Service Account can read but cannot write. Share the sheet as Editor with: ${getServiceEmail() ?? "service account"}`,
+          sheetTitle,
+          diagnostics: diag,
+        };
+      }
+      throw e;
+    }
+
+    return { ok: true, sheetTitle, diagnostics: diag };
   } catch (err: unknown) {
     const msg = String(err);
 
-    if (msg.includes("google_token_error:invalid_grant") || msg.includes("google_token_error:unauthorized_client")) {
-      return { ok: false, error: "GOOGLE_PRIVATE_KEY أو Email غلوط — راجع credentials ديالك", diagnostics: diag };
+    if (msg.includes("google_token_error:invalid_grant") || msg.includes("unauthorized_client")) {
+      return { ok: false, error: "GOOGLE_PRIVATE_KEY or Email is wrong — check your credentials", diagnostics: diag };
     }
     if (msg.includes("google_token_error:")) {
       const parts = msg.split(":");
-      return { ok: false, error: "خطأ في المصادقة: " + (parts[2] || parts[1]), diagnostics: diag };
+      return { ok: false, error: "Auth error: " + (parts[2] || parts[1]), diagnostics: diag };
     }
     if (msg.includes("invalid format")) {
-      return { ok: false, error: "صيغة GOOGLE_PRIVATE_KEY غلوطة — خاصو يبدأ بـ -----BEGIN PRIVATE KEY-----", diagnostics: diag };
+      return { ok: false, error: "GOOGLE_PRIVATE_KEY format invalid — must start with -----BEGIN PRIVATE KEY-----", diagnostics: diag };
     }
     if (msg.includes("404") || msg.includes("not found")) {
-      return { ok: false, error: "Sheet ID غلوط أو ما موجودش", diagnostics: diag };
-    }
-    if (msg.includes("403") || msg.includes("PERMISSION_DENIED") || msg.includes("permission")) {
-      return { ok: false, error: "Service Account ما عندهش صلاحية — شارك الـ Sheet مع: " + (getServiceEmail() ?? "service account"), diagnostics: diag };
+      return { ok: false, error: "GOOGLE_SHEET_ID is wrong or sheet not found", diagnostics: diag };
     }
     if (RETRYABLE.some((s) => msg.includes(s))) {
-      return { ok: false, error: "خطأ في الشبكة بعد عدة محاولات — جرب من جديد", diagnostics: diag };
+      return { ok: false, error: "Network error after retries — try again", diagnostics: diag };
     }
-    return { ok: false, error: msg, diagnostics: diag };
+    return { ok: false, error: msg.slice(0, 300), diagnostics: diag };
   }
 }
 
 // ── Sync order ─────────────────────────────────────────────────────────────
 
-export async function syncOrderToSheet(order: Order, config?: SyncConfig): Promise<boolean> {
-  if (!isConfigured() && !config?.sheetId) return false;
+export interface SyncResult {
+  ok: boolean;
+  error?: string;
+  stage?: string;
+}
+
+export async function syncOrderToSheet(order: Order, config?: SyncConfig): Promise<SyncResult> {
+  if (!isConfigured() && !config?.sheetId) {
+    return { ok: false, error: "Google Sheets not configured", stage: "config_check" };
+  }
+
+  let stage = "init";
   try {
+    stage = "auth";
     const { sheets, sheetId } = await getAuthAndSheets(config);
-    const itemsSummary = order.items?.map((i) => `${i.product_title} (${i.quantity}x)`).join(", ") || "";
+
+    stage = "get_sheet_title";
+    const sheetTitle = await getFirstSheetTitle(sheets, sheetId);
+
+    stage = "ensure_headers";
+    await ensureHeaders(sheets, sheetId, sheetTitle);
+
+    // Build the 13-column row
+    const itemsTitle = order.items?.map((i) => i.product_title).filter(Boolean).join(", ") || "";
+    const sizes = order.items?.map((i) => i.size).filter(Boolean).join(", ") || "";
+    const totalQty = order.items?.reduce((s, i) => s + (Number(i.quantity) || 0), 0) || 1;
+    const fullName = `${order.customer_first_name ?? ""} ${order.customer_last_name ?? ""}`.trim();
+
     const row = [
-      order.id,
+      order.id ?? "",
       new Date(order.created_at || Date.now()).toLocaleString("ar-MA"),
-      order.customer_first_name,
-      order.customer_last_name,
-      order.phone,
-      order.city,
-      order.address,
-      order.total_amount,
-      order.status,
-      itemsSummary,
-      order.notes || "",
+      fullName,
+      order.phone ?? "",
+      order.city ?? "",
+      order.address ?? "",
+      itemsTitle,
+      sizes,
+      String(totalQty),
+      String(order.total_amount ?? 0),
+      order.status ?? "new",
+      order.notes ?? "",
+      order.source ?? "direct",
     ];
+
+    stage = "append_row";
     await sheets.spreadsheets.values.append({
       spreadsheetId: sheetId,
-      range: "Feuille1!A:K",
+      range: `${quoteSheet(sheetTitle)}!A:M`,
       valueInputOption: "USER_ENTERED",
+      insertDataOption: "INSERT_ROWS",
       requestBody: { values: [row] },
     });
-    return true;
-  } catch (err) {
-    console.error("[Google Sheets] sync error:", err);
-    return false;
+
+    return { ok: true };
+  } catch (err: unknown) {
+    const msg = String(err);
+    // Strip any potential secrets from the error message
+    const safeMsg = msg
+      .replace(/BEGIN[^-]*PRIVATE[^-]*KEY[^-]*-+[\s\S]*?-+END[^-]*PRIVATE[^-]*KEY[^-]*-+/gi, "[KEY_REDACTED]")
+      .slice(0, 300);
+    console.error(`[Google Sheets] syncOrderToSheet failed at stage=${stage} order=${order.id}:`, safeMsg);
+    return { ok: false, error: safeMsg, stage };
   }
 }
 
-// ── Update order status ────────────────────────────────────────────────────
+// ── Update order status in sheet ───────────────────────────────────────────
 
-export async function updateOrderStatusInSheet(orderId: string, status: string, config?: SyncConfig): Promise<boolean> {
+export async function updateOrderStatusInSheet(
+  orderId: string,
+  status: string,
+  config?: SyncConfig
+): Promise<boolean> {
   if (!isConfigured() && !config?.sheetId) return false;
   try {
     const { sheets, sheetId } = await getAuthAndSheets(config);
-    const response = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: "Feuille1!A:A" });
-    const rows = response.data.values || [];
+    const sheetTitle = await getFirstSheetTitle(sheets, sheetId);
+
+    // Find the row with matching order ID in column A
+    const range = `${quoteSheet(sheetTitle)}!A:A`;
+    const response = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range });
+    const rows = (response.data.values as string[][] | undefined) || [];
     const rowIndex = rows.findIndex((r) => r[0] === orderId);
     if (rowIndex === -1) return false;
+
+    // Status is column K (11th column) in the new 13-column schema
     await sheets.spreadsheets.values.update({
       spreadsheetId: sheetId,
-      range: `Feuille1!I${rowIndex + 1}`,
+      range: `${quoteSheet(sheetTitle)}!K${rowIndex + 1}`,
       valueInputOption: "USER_ENTERED",
       requestBody: { values: [[status]] },
     });
     return true;
   } catch (err) {
-    console.error("[Google Sheets] update error:", err);
+    console.error("[Google Sheets] updateOrderStatusInSheet error:", err);
     return false;
   }
 }

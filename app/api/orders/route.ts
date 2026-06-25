@@ -73,21 +73,23 @@ export async function POST(req: NextRequest) {
     // Result is written back to the orders row so failed syncs can be retried later.
     try {
       const { isConfigured, syncOrderToSheet } = await import("@/lib/google-sheets");
+      type SyncResult = { ok: boolean; error?: string; stage?: string };
 
       if (isConfigured()) {
         const orderWithItems = { ...newOrder, items } as Order;
-        const synced = await withTimeout(syncOrderToSheet(orderWithItems), 8000, false);
+        const fallback: SyncResult = { ok: false, error: "timeout", stage: "timeout" };
+        const result = await withTimeout(syncOrderToSheet(orderWithItems), 8000, fallback);
 
         await supabase
           .from("orders")
           .update({
-            google_sheet_synced: synced,
-            google_sheet_error: synced ? null : "sync_failed_on_create",
+            google_sheet_synced: result.ok,
+            google_sheet_error: result.ok ? null : (result.error ?? "sync_failed_on_create").slice(0, 200),
           })
           .eq("id", newOrder.id);
 
-        if (!synced) {
-          console.error("[Google Sheets] Failed to sync order", newOrder.id, "on creation");
+        if (!result.ok) {
+          console.error("[Google Sheets] Failed to sync order", newOrder.id, "stage=", result.stage, result.error);
         } else {
           console.log("[Google Sheets] Order", newOrder.id, "synced successfully");
         }

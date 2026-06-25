@@ -30,7 +30,12 @@ export default function AdminGoogleSheetsPage() {
   const [testing, setTesting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<{ synced: number; failed: number; total: number } | null>(null);
+  const [syncResult, setSyncResult] = useState<{
+    synced: number;
+    failed: number;
+    total: number;
+    failures?: { order_id: string; customer: string; error: string; stage: string }[];
+  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -93,9 +98,14 @@ export default function AdminGoogleSheetsPage() {
           service_account_email: form.service_account_email || undefined,
         }),
       });
-      const d = await r.json() as { success: boolean; error?: string };
-      if (d.success) toast.success("الربط يخدم بشكل صحيح");
-      else toast.error(d.error || "الربط فاشل");
+      const d = await r.json() as { success: boolean; error?: string; sheetTitle?: string; diagnostics?: { writeAccess?: boolean } };
+      if (d.success) {
+        const tab = d.sheetTitle ? ` (tab: "${d.sheetTitle}")` : "";
+        const write = d.diagnostics?.writeAccess ? " — write OK" : "";
+        toast.success(`الربط يخدم${tab}${write}`);
+      } else {
+        toast.error(d.error || "الربط فاشل");
+      }
     } catch { toast.error("خطأ في الاختبار"); }
     setTesting(false);
   };
@@ -133,9 +143,9 @@ export default function AdminGoogleSheetsPage() {
     setSyncResult(null);
     try {
       const r = await fetch("/api/admin/google-sheets/sync-all", { method: "POST" });
-      const d = await r.json() as { success: boolean; synced?: number; failed?: number; total?: number; error?: string };
+      const d = await r.json() as { success: boolean; synced?: number; failed?: number; total?: number; error?: string; failures?: { order_id: string; customer: string; error: string; stage: string }[] };
       if (d.success) {
-        const result = { synced: d.synced ?? 0, failed: d.failed ?? 0, total: d.total ?? 0 };
+        const result = { synced: d.synced ?? 0, failed: d.failed ?? 0, total: d.total ?? 0, failures: d.failures };
         setSyncResult(result);
         if (result.total === 0) toast.success("ما كاين حتى طلب محتاج مزامنة");
         else if (result.failed === 0) toast.success(`تمت مزامنة ${result.synced} طلب بنجاح`);
@@ -325,10 +335,26 @@ export default function AdminGoogleSheetsPage() {
         </p>
 
         {syncResult && (
-          <div className={`p-3 mb-4 text-sm border ${syncResult.failed === 0 ? "bg-green-50 border-green-200 text-green-800" : "bg-yellow-50 border-yellow-200 text-yellow-800"}`}>
-            {syncResult.total === 0
-              ? "ما كاين حتى طلب محتاج مزامنة — كلشي متزامن"
-              : `تمت المزامنة: ${syncResult.synced} نجح، ${syncResult.failed} فشل، من أصل ${syncResult.total} طلب`}
+          <div className="mb-4 space-y-2">
+            <div className={`p-3 text-sm border ${syncResult.failed === 0 ? "bg-green-50 border-green-200 text-green-800" : "bg-yellow-50 border-yellow-200 text-yellow-800"}`}>
+              {syncResult.total === 0
+                ? "ما كاين حتى طلب محتاج مزامنة — كلشي متزامن"
+                : `تمت المزامنة: ${syncResult.synced} نجح، ${syncResult.failed} فشل، من أصل ${syncResult.total} طلب`}
+            </div>
+            {syncResult.failures && syncResult.failures.length > 0 && (
+              <div className="border border-red-200 bg-red-50 p-3 space-y-2">
+                <p className="text-xs font-bold text-red-700 mb-1">تفاصيل الأخطاء:</p>
+                {syncResult.failures.map((f) => (
+                  <div key={f.order_id} className="text-xs text-red-800 border-b border-red-100 pb-1 last:border-0">
+                    <span className="font-bold">{f.customer || f.order_id}</span>
+                    {" — "}
+                    <span className="font-mono text-red-600">[{f.stage}]</span>
+                    {" "}
+                    <span>{f.error}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
