@@ -29,6 +29,8 @@ export default function AdminGoogleSheetsPage() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ synced: number; failed: number; total: number } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -123,6 +125,26 @@ export default function AdminGoogleSheetsPage() {
       ].join("\n");
       alert("تشخيص Google Sheets\n\n" + lines);
     } catch { toast.error("خطأ في التشخيص"); }
+  };
+
+  const syncAll = async () => {
+    if (!canTest) { toast.error("Google Sheets غير مهيأ — تحقق من الـ env vars"); return; }
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const r = await fetch("/api/admin/google-sheets/sync-all", { method: "POST" });
+      const d = await r.json() as { success: boolean; synced?: number; failed?: number; total?: number; error?: string };
+      if (d.success) {
+        const result = { synced: d.synced ?? 0, failed: d.failed ?? 0, total: d.total ?? 0 };
+        setSyncResult(result);
+        if (result.total === 0) toast.success("ما كاين حتى طلب محتاج مزامنة");
+        else if (result.failed === 0) toast.success(`تمت مزامنة ${result.synced} طلب بنجاح`);
+        else toast.error(`${result.synced} نجح، ${result.failed} فشل من ${result.total}`);
+      } else {
+        toast.error(d.error || "خطأ في المزامنة");
+      }
+    } catch { toast.error("خطأ في الاتصال"); }
+    setSyncing(false);
   };
 
   const exportCSV = async () => {
@@ -280,13 +302,6 @@ export default function AdminGoogleSheetsPage() {
             تشخيص
           </button>
 
-          <button
-            disabled
-            className="flex items-center gap-2 border border-gray-300 text-brand-gray font-bold px-4 py-2 text-sm opacity-40 cursor-not-allowed"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-            مزامنة يدوية
-          </button>
         </div>
 
         {!canTest && (
@@ -299,6 +314,36 @@ export default function AdminGoogleSheetsPage() {
               <p>• GOOGLE_SERVICE_ACCOUNT_EMAIL — Email ديال الـ Service Account</p>
             )}
           </div>
+        )}
+      </div>
+
+      {/* Bulk sync */}
+      <div className="bg-white border border-gray-200 p-5 mb-4">
+        <h2 className="font-black text-brand-navy mb-1">مزامنة الطلبات القديمة</h2>
+        <p className="text-brand-gray text-sm mb-4">
+          زامن الطلبات اللي ما وصلاتش لـ Google Sheets بعد — كيتجاهل الطلبات اللي تزامنت بالفعل.
+        </p>
+
+        {syncResult && (
+          <div className={`p-3 mb-4 text-sm border ${syncResult.failed === 0 ? "bg-green-50 border-green-200 text-green-800" : "bg-yellow-50 border-yellow-200 text-yellow-800"}`}>
+            {syncResult.total === 0
+              ? "ما كاين حتى طلب محتاج مزامنة — كلشي متزامن"
+              : `تمت المزامنة: ${syncResult.synced} نجح، ${syncResult.failed} فشل، من أصل ${syncResult.total} طلب`}
+          </div>
+        )}
+
+        <button
+          onClick={syncAll}
+          disabled={syncing || !canTest || !HAS_SUPABASE}
+          title={!canTest ? "خاصك تهيئ Google Sheets أولاً" : ""}
+          className="flex items-center gap-2 bg-brand-navy text-white font-bold px-5 py-2.5 text-sm hover:bg-opacity-85 disabled:opacity-50 transition-colors"
+        >
+          <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+          {syncing ? "جاري المزامنة..." : "مزامنة الطلبات القديمة"}
+        </button>
+
+        {!HAS_SUPABASE && (
+          <p className="text-xs text-yellow-700 mt-2">خاصك تربط Supabase باش تقدر تزامن</p>
         )}
       </div>
 

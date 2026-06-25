@@ -1,12 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Order, OrderItem } from "@/types";
 
+/** Race a promise against a timeout — returns fallback on timeout */
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const { order, items } = await req.json() as { order: Omit<Order, "id">, items: OrderItem[] };
+    const { order, items } = await req.json() as { order: Omit<Order, "id">; items: OrderItem[] };
 
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      // Static fallback — generate local ID
       const order_id = `ORD-${Date.now()}`;
       return NextResponse.json({ success: true, order_id });
     }
@@ -14,7 +21,7 @@ export async function POST(req: NextRequest) {
     const { createAdminClient } = await import("@/lib/supabase/server");
     const supabase = createAdminClient();
 
-    // Check duplicate
+    // Check duplicate (same phone within last 24h)
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { data: recent } = await supabase
       .from("orders")
@@ -37,7 +44,7 @@ export async function POST(req: NextRequest) {
     // Insert order
     const { data: newOrder, error } = await supabase
       .from("orders")
-      .insert({ ...order, is_duplicate, is_blacklisted })
+      .insert({ ...order, is_duplicate, is_blacklisted, google_sheet_synced: false })
       .select()
       .single();
 
@@ -55,21 +62,54 @@ export async function POST(req: NextRequest) {
     // Initial status history
     await supabase.from("order_status_history").insert({
       order_id: newOrder.id,
-      old_status: "جديد",
-      new_status: "جديد",
-      note: "طلب جديد",
+      old_status: "new",
+      new_status: "new",
+      note: "new order",
       changed_by: "system",
     });
 
-    // Sync to Google Sheets (fire-and-forget, non-blocking)
+    // Google Sheets sync
+    // Awaited with an 8-second timeout so Vercel serverless does not cut it off.
+    // Result is written back to the orders row so failed syncs can be retried later.
     try {
-      const { syncOrderToSheet } = await import("@/lib/google-sheets");
-      void syncOrderToSheet({ ...newOrder, items });
-    } catch { /* ignore */ }
+      const { isConfigured, syncOrderToSheet } = await import("@/lib/google-sheets");
+
+      if (isConfigured()) {
+        const orderWithItems = { ...newOrder, items } as Order;
+        const synced = await withTimeout(syncOrderToSheet(orderWithItems), 8000, false);
+
+        await supabase
+          .from("orders")
+          .update({
+            google_sheet_synced: synced,
+            google_sheet_error: synced ? null : "sync_failed_on_create",
+          })
+          .eq("id", newOrder.id);
+
+        if (!synced) {
+          console.error("[Google Sheets] Failed to sync order", newOrder.id, "on creation");
+        } else {
+          console.log("[Google Sheets] Order", newOrder.id, "synced successfully");
+        }
+      } else {
+        console.log("[Google Sheets] Not configured — skipping sync for order", newOrder.id);
+      }
+    } catch (sheetErr) {
+      // Sheets errors must never block the order response
+      console.error("[Google Sheets] Exception during sync for order", newOrder.id, sheetErr);
+      supabase
+        .from("orders")
+        .update({
+          google_sheet_synced: false,
+          google_sheet_error: String(sheetErr).slice(0, 200),
+        })
+        .eq("id", newOrder.id)
+        .then(() => { /* ignore */ });
+    }
 
     return NextResponse.json({ success: true, order_id: newOrder.id });
   } catch (err) {
     console.error("Order creation error:", err);
-    return NextResponse.json({ success: false, error: "خطأ في الخادم" }, { status: 500 });
+    return NextResponse.json({ success: false, error: "server error" }, { status: 500 });
   }
 }
