@@ -34,6 +34,7 @@ export default function AdminGoogleSheetsPage() {
     setLoading(true);
     try {
       const r = await fetch("/api/admin/google-sheets", {
+        cache: "no-store",
         headers: { "Cache-Control": "no-store" },
       });
       const d = await r.json() as {
@@ -190,9 +191,9 @@ export default function AdminGoogleSheetsPage() {
           sub={envStatus.hasServiceEmail ? "موجود فـ .env" : "GOOGLE_SERVICE_ACCOUNT_EMAIL مفقود"}
         />
         <StatusBadge
-          ok={form.enabled}
-          label={form.enabled ? "المزامنة مفعّلة" : "المزامنة موقوفة"}
-          sub={form.last_sync_status || undefined}
+          ok={envStatus.hasSheetId || form.sheet_id.length > 0}
+          label={envStatus.hasSheetId || form.sheet_id.length > 0 ? "GOOGLE_SHEET_ID" : "GOOGLE_SHEET_ID مفقود"}
+          sub={envStatus.hasSheetId || form.sheet_id.length > 0 ? "موجود فـ .env أو الإعدادات" : "زيده فـ .env.local أو الإعدادات"}
         />
       </div>
 

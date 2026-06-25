@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { NextRequest, NextResponse } from "next/server";
 import { getConfigStatus, testConnection } from "@/lib/google-sheets";
 
