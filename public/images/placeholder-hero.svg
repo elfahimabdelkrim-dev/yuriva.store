@@ -1,0 +1,47 @@
+<svg width="1440" height="600" viewBox="0 0 1440 600" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1440" height="600" fill="#05051F"/>
+  <defs>
+    <pattern id="grid" x="0" y="0" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M 60 0 L 0 0 0 60" fill="none" stroke="#C9A84C" stroke-width="0.4"/>
+    </pattern>
+    <linearGradient id="fade" x1="1" y1="0" x2="0" y2="0">
+      <stop offset="0%" stop-color="#05051F" stop-opacity="0"/>
+      <stop offset="60%" stop-color="#05051F" stop-opacity="0.85"/>
+    </linearGradient>
+  </defs>
+  <rect width="1440" height="600" fill="url(#grid)" opacity="0.06"/>
+  <rect x="0" y="0" width="4" height="600" fill="#C9A84C"/>
+  <!-- Pants silhouette 1 -->
+  <g transform="translate(840,60)" opacity="0.92">
+    <rect x="30" y="0" width="180" height="28" rx="3" fill="#1a1a3e"/>
+    <rect x="30" y="9" width="180" height="4" fill="#C9A84C" opacity="0.5"/>
+    <path d="M30 28 L50 480 L140 480 L120 28Z" fill="#1E2A4A"/>
+    <path d="M120 28 L160 480 L250 480 L210 28Z" fill="#162038"/>
+    <line x1="120" y1="28" x2="150" y2="480" stroke="#C9A84C" stroke-width="1" opacity="0.35"/>
+    <path d="M55 80 Q55 130 85 130 Q85 80 55 80" fill="none" stroke="#C9A84C" stroke-width="1.5" opacity="0.5"/>
+    <rect x="50" y="465" width="90" height="14" rx="2" fill="#C9A84C" opacity="0.18"/>
+    <rect x="160" y="465" width="90" height="14" rx="2" fill="#C9A84C" opacity="0.18"/>
+  </g>
+  <!-- Pants silhouette 2 -->
+  <g transform="translate(1060,40)" opacity="0.6">
+    <rect x="30" y="0" width="160" height="25" rx="3" fill="#0d1428"/>
+    <rect x="30" y="8" width="160" height="3" fill="#C9A84C" opacity="0.35"/>
+    <path d="M30 25 L48 440 L128 440 L110 25Z" fill="#111828"/>
+    <path d="M110 25 L148 440 L228 440 L190 25Z" fill="#0d1428"/>
+    <line x1="110" y1="25" x2="138" y2="440" stroke="#C9A84C" stroke-width="1" opacity="0.25"/>
+  </g>
+  <!-- Shorts silhouette -->
+  <g transform="translate(1240,90)" opacity="0.45">
+    <rect x="20" y="0" width="140" height="22" rx="3" fill="#0a1020"/>
+    <rect x="20" y="7" width="140" height="3" fill="#C9A84C" opacity="0.3"/>
+    <path d="M20 22 L35 210 L105 210 L95 22Z" fill="#0e1830"/>
+    <path d="M95 22 L125 210 L195 210 L165 22Z" fill="#0a1420"/>
+  </g>
+  <!-- Overlay gradient for text readability -->
+  <rect width="1440" height="600" fill="url(#fade)"/>
+  <!-- Gold dot accents -->
+  <circle cx="420" cy="80" r="2" fill="#C9A84C" opacity="0.5"/>
+  <circle cx="500" cy="160" r="1.5" fill="#C9A84C" opacity="0.4"/>
+  <circle cx="360" cy="220" r="1" fill="#C9A84C" opacity="0.3"/>
+  <circle cx="460" cy="310" r="2" fill="#C9A84C" opacity="0.45"/>
+</svg>

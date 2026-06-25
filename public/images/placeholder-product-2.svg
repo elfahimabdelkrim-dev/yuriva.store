@@ -1,0 +1,6 @@
+<svg width="600" height="700" viewBox="0 0 600 700" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="600" height="700" fill="#F0F0F0"/>
+  <rect x="200" y="250" width="200" height="200" rx="8" fill="#E5E7EB"/>
+  <text x="300" y="360" text-anchor="middle" font-family="system-ui" font-size="14" fill="#9CA3AF">YURIVA</text>
+  <text x="300" y="380" text-anchor="middle" font-family="system-ui" font-size="12" fill="#D1D5DB">صورة المنتج 2</text>
+</svg>

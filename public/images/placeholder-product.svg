@@ -1,0 +1,33 @@
+<svg width="600" height="800" viewBox="0 0 600 800" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="600" height="800" fill="#F3F3F3"/>
+  <!-- Pants silhouette centered -->
+  <g transform="translate(160, 80)">
+    <!-- Waistband -->
+    <rect x="10" y="0" width="260" height="38" rx="4" fill="#D1D5DB"/>
+    <rect x="10" y="13" width="260" height="6" fill="#9CA3AF" opacity="0.5"/>
+    <!-- Belt loops -->
+    <rect x="40" y="0" width="12" height="18" rx="2" fill="#9CA3AF" opacity="0.4"/>
+    <rect x="130" y="0" width="12" height="18" rx="2" fill="#9CA3AF" opacity="0.4"/>
+    <rect x="228" y="0" width="12" height="18" rx="2" fill="#9CA3AF" opacity="0.4"/>
+    <!-- Left leg -->
+    <path d="M10 38 L30 600 L150 600 L130 38Z" fill="#D1D5DB"/>
+    <!-- Right leg -->
+    <path d="M150 38 L150 38 L200 600 L320 600 L270 38Z" fill="#C8CDD5"/>
+    <!-- Center seam -->
+    <line x1="150" y1="38" x2="175" y2="600" stroke="#9CA3AF" stroke-width="1.5" opacity="0.4"/>
+    <!-- Left pocket -->
+    <path d="M30 80 Q30 140 80 140 Q80 80 30 80" fill="none" stroke="#9CA3AF" stroke-width="2" opacity="0.5"/>
+    <!-- Right pocket -->
+    <path d="M195 80 Q195 140 245 140 Q245 80 195 80" fill="none" stroke="#9CA3AF" stroke-width="2" opacity="0.5"/>
+    <!-- Cargo pocket left -->
+    <rect x="22" y="200" width="80" height="90" rx="3" fill="none" stroke="#9CA3AF" stroke-width="1.5" opacity="0.4"/>
+    <!-- Cargo pocket right -->
+    <rect x="178" y="200" width="80" height="90" rx="3" fill="none" stroke="#9CA3AF" stroke-width="1.5" opacity="0.4"/>
+    <!-- Bottom cuffs -->
+    <rect x="30" y="588" width="120" height="12" rx="2" fill="#9CA3AF" opacity="0.25"/>
+    <rect x="200" y="588" width="120" height="12" rx="2" fill="#9CA3AF" opacity="0.25"/>
+  </g>
+  <!-- YURIVA brand text -->
+  <text x="300" y="748" text-anchor="middle" font-family="system-ui, sans-serif" font-size="22" font-weight="bold" fill="#C9A84C" opacity="0.7">YURIVA</text>
+  <text x="300" y="775" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#9CA3AF">Para &amp; Cargo Collection</text>
+</svg>

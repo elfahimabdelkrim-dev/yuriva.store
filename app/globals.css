@@ -1,0 +1,124 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-white: #ffffff;
+  --color-light: #f8f8f8;
+  --color-navy: #05051f;
+  --color-gold: #c9a84c;
+  --color-gray: #6b7280;
+}
+
+html {
+  direction: rtl;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: "Noto Kufi Arabic", "Noto Sans Arabic", system-ui, sans-serif;
+  background-color: #ffffff;
+  color: #05051f;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f8f8f8;
+}
+::-webkit-scrollbar-thumb {
+  background: #c9a84c;
+  border-radius: 3px;
+}
+
+/* Gold underline for links */
+.gold-underline {
+  @apply border-b border-brand-gold;
+}
+
+/* Price text */
+.price-text {
+  @apply text-brand-navy font-bold;
+}
+
+.old-price-text {
+  @apply text-brand-gray line-through text-sm;
+}
+
+/* Badge gold */
+.badge-gold {
+  @apply bg-brand-gold text-white text-xs font-bold px-2 py-0.5 rounded-sm;
+}
+
+/* Button primary */
+.btn-primary {
+  @apply bg-brand-navy text-white font-bold py-3 px-6 rounded-none hover:bg-opacity-90 transition-all duration-200 text-center block;
+}
+
+/* Button secondary */
+.btn-secondary {
+  @apply border border-brand-navy text-brand-navy font-bold py-3 px-6 rounded-none hover:bg-brand-navy hover:text-white transition-all duration-200 text-center block;
+}
+
+/* Button gold */
+.btn-gold {
+  @apply bg-brand-gold text-white font-bold py-3 px-6 rounded-none hover:bg-opacity-90 transition-all duration-200 text-center block;
+}
+
+/* Image aspect ratios */
+.aspect-product {
+  aspect-ratio: 3/4;
+}
+
+.aspect-hero {
+  aspect-ratio: 16/7;
+}
+
+/* Skeleton loading */
+.skeleton {
+  @apply bg-gray-200 animate-pulse rounded;
+}
+
+/* Hide scrollbar */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Focus ring */
+*:focus-visible {
+  outline: 2px solid #c9a84c;
+  outline-offset: 2px;
+}
+
+/* Product card hover */
+.product-card:hover .product-card-img {
+  transform: scale(1.03);
+}
+
+/* Smooth transitions */
+* {
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+
+/* Accordion */
+.accordion-content {
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+
+/* Mobile sticky bar safe area */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}

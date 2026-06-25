@@ -1,0 +1,103 @@
+import type { Category } from "@/types";
+
+export const staticCategories: Category[] = [
+  {
+    id: "pantalons-para",
+    name: "سراول Para",
+    slug: "pantalons-para",
+    image_url: "/images/placeholder-category.svg",
+    banner_url: "/images/placeholder-banner.svg",
+    description: "اشري أحسن سراول Para فالمغرب — راحة وجودة مضمونة، توصيل مجاني.",
+    seo_title: "سراول Para رجالية | YURIVA — pantalon para homme maroc",
+    seo_description: "تشكيلة واسعة من سراول Para الرجالية بأحسن الأثمنة. توصيل مجاني والدفع عند الاستلام. pantalon para homme maroc.",
+    seo_keywords: "pantalon para maroc, pantalon para homme maroc, سراول para maroc, srawal para",
+    sort_order: 1,
+    is_active: true,
+  },
+  {
+    id: "shorts-para",
+    name: "Shorts Para",
+    slug: "shorts-para",
+    image_url: "/images/placeholder-category.svg",
+    banner_url: "/images/placeholder-banner.svg",
+    description: "Shorts Para مريحة وخفيفة، مناسبة للصيف والرياضة. توصيل مجاني في جميع المغرب.",
+    seo_title: "Shorts Para رجالية | YURIVA — short para homme maroc",
+    seo_description: "اشري Shorts Para الرجالية بأحسن الأثمنة. توصيل مجاني. short para homme maroc، shorts para maroc.",
+    seo_keywords: "short para homme maroc, shorts para maroc, short para maroc",
+    sort_order: 2,
+    is_active: true,
+  },
+  {
+    id: "cargo",
+    name: "Cargo",
+    slug: "cargo",
+    image_url: "/images/placeholder-category.svg",
+    banner_url: "/images/placeholder-banner.svg",
+    description: "سراول Cargo بجيوب واسعة وخامة متينة، مناسبة لكل الاستعمالات.",
+    seo_title: "سراول Cargo | YURIVA — cargo pants maroc",
+    seo_description: "اشري أحسن سراول Cargo فالمغرب. جيوب واسعة وخامة متينة. cargo pants maroc، pantalon cargo homme maroc.",
+    seo_keywords: "cargo pants maroc, pantalon cargo homme maroc, cargo maroc",
+    sort_order: 3,
+    is_active: true,
+  },
+  {
+    id: "packs",
+    name: "Packs",
+    slug: "packs",
+    image_url: "/images/placeholder-category.svg",
+    banner_url: "/images/placeholder-banner.svg",
+    description: "باكات ديال الملابس الرجالية — وفر أكثر واشري باك. الأحسن ثمناً فالمغرب.",
+    seo_title: "Packs ملابس رجالية | YURIVA — pack pantalon homme maroc",
+    seo_description: "اشري باك سراول وShorts بأحسن الأثمنة. توصيل مجاني والدفع عند الاستلام. pack pantalon homme maroc.",
+    seo_keywords: "pack pantalon homme maroc, pack shorts maroc, pack vêtements homme maroc",
+    sort_order: 4,
+    is_active: true,
+  },
+  {
+    id: "offers",
+    name: "العروض",
+    slug: "offers",
+    image_url: "/images/placeholder-category.svg",
+    banner_url: "/images/placeholder-banner.svg",
+    description: "أحسن العروض فمتجر YURIVA — تخفيضات حقيقية، توصيل مجاني.",
+    seo_title: "عروض وتخفيضات | YURIVA — soldes maroc",
+    seo_description: "اشري ملابس رجالية بأحسن الأثمنة مع عروض YURIVA. توصيل مجاني والدفع عند الاستلام.",
+    seo_keywords: "عروض ملابس رجالية maroc, soldes pantalon maroc",
+    sort_order: 5,
+    is_active: true,
+  },
+  {
+    id: "best-sellers",
+    name: "الأكثر مبيعاً",
+    slug: "best-sellers",
+    image_url: "/images/placeholder-category.svg",
+    banner_url: "/images/placeholder-banner.svg",
+    description: "المنتجات الأكثر مبيعاً فمتجر YURIVA — اختيار آلاف الزبناء.",
+    seo_title: "الأكثر مبيعاً | YURIVA",
+    seo_description: "اشري المنتجات الأكثر مبيعاً فمتجر YURIVA. توصيل مجاني والدفع عند الاستلام.",
+    seo_keywords: "best sellers maroc, الأكثر مبيعاً maroc",
+    sort_order: 6,
+    is_active: true,
+  },
+  {
+    id: "new-arrivals",
+    name: "الجديد",
+    slug: "new-arrivals",
+    image_url: "/images/placeholder-category.svg",
+    banner_url: "/images/placeholder-banner.svg",
+    description: "آخر الوافد لمتجر YURIVA — منتجات جديدة كل أسبوع.",
+    seo_title: "الجديد | YURIVA",
+    seo_description: "اكتشف آخر الوافد لمتجر YURIVA. توصيل مجاني والدفع عند الاستلام.",
+    seo_keywords: "new arrivals maroc, الجديد maroc, وصل جديد",
+    sort_order: 7,
+    is_active: true,
+  },
+];
+
+export function getCategoryBySlug(slug: string): Category | undefined {
+  return staticCategories.find((c) => c.slug === slug);
+}
+
+export function getActiveCategories(): Category[] {
+  return staticCategories.filter((c) => c.is_active).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+}
