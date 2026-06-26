@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { getConfigStatus, testConnection } from "@/lib/google-sheets";
+import { getConfigStatus, testConnection, cleanSheetId, sheetIdWarning } from "@/lib/google-sheets";
 
 // GET — load settings + env status
 export async function GET() {
@@ -70,7 +70,7 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-// POST — test connection
+// POST — test connection (also validates + cleans the sheet ID)
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json() as { sheet_id?: string; service_account_email?: string };
@@ -98,7 +98,10 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const sheetId = body.sheet_id?.trim() || process.env.GOOGLE_SHEET_ID;
+    const rawSheetId = body.sheet_id?.trim() || process.env.GOOGLE_SHEET_ID || "";
+    const sheetId = cleanSheetId(rawSheetId);
+    const idWarn = sheetIdWarning(sheetId);
+
     if (!sheetId) {
       return NextResponse.json({
         success: false,
@@ -115,6 +118,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: result.ok,
       error: result.error,
+      sheetTitle: result.sheetTitle,
+      sheetIdCleaned: sheetId,
+      sheetIdWarning: idWarn,
       diagnostics: result.diagnostics,
     });
   } catch (e) {

@@ -10,6 +10,7 @@ interface EnvStatus {
   hasServiceEmail: boolean;
   hasSheetId: boolean;
   privateKeyValid?: boolean;
+  sheetIdWarning?: string | null;
 }
 
 export default function AdminGoogleSheetsPage() {
@@ -24,6 +25,7 @@ export default function AdminGoogleSheetsPage() {
     hasServiceEmail: false,
     hasSheetId: false,
     privateKeyValid: false,
+    sheetIdWarning: null,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -51,6 +53,7 @@ export default function AdminGoogleSheetsPage() {
         hasServiceEmail?: boolean;
         hasSheetId?: boolean;
         privateKeyValid?: boolean;
+        sheetIdWarning?: string | null;
       };
       if (d.success) {
         if (d.data) setForm(prev => ({ ...prev, ...d.data }));
@@ -59,6 +62,7 @@ export default function AdminGoogleSheetsPage() {
           hasServiceEmail: d.hasServiceEmail ?? false,
           hasSheetId: d.hasSheetId ?? false,
           privateKeyValid: d.privateKeyValid ?? false,
+          sheetIdWarning: d.sheetIdWarning ?? null,
         });
       }
     } catch {}
@@ -98,10 +102,20 @@ export default function AdminGoogleSheetsPage() {
           service_account_email: form.service_account_email || undefined,
         }),
       });
-      const d = await r.json() as { success: boolean; error?: string; sheetTitle?: string; diagnostics?: { writeAccess?: boolean } };
+      const d = await r.json() as {
+        success: boolean;
+        error?: string;
+        sheetTitle?: string;
+        sheetIdCleaned?: string;
+        sheetIdWarning?: string | null;
+        diagnostics?: { writeAccess?: boolean };
+      };
+      if (d.sheetIdWarning) {
+        toast.error("Sheet ID مشبوه: " + d.sheetIdWarning + (d.sheetIdCleaned ? " — cleaned: " + d.sheetIdCleaned : ""));
+      }
       if (d.success) {
-        const tab = d.sheetTitle ? ` (tab: "${d.sheetTitle}")` : "";
-        const write = d.diagnostics?.writeAccess ? " — write OK" : "";
+        const tab = d.sheetTitle ? ` — tab: "${d.sheetTitle}"` : "";
+        const write = d.diagnostics?.writeAccess ? " — كتابة OK" : " — لا كتابة";
         toast.success(`الربط يخدم${tab}${write}`);
       } else {
         toast.error(d.error || "الربط فاشل");
@@ -121,7 +135,15 @@ export default function AdminGoogleSheetsPage() {
         privateKeyValid: boolean;
         serviceEmailDomain: string | null;
         sheetIdLength: number;
+        sheetIdCleaned: string;
+        sheetIdWarning: string | null;
       };
+      const sheetIdLine = d.hasSheetId
+        ? "موجود (" + d.sheetIdLength + " حرف" + (d.sheetIdWarning ? " — WARNING: " + d.sheetIdWarning : "") + ")"
+          + (d.sheetIdCleaned && d.sheetIdCleaned.length !== d.sheetIdLength
+            ? "\n  cleaned: " + d.sheetIdCleaned + " (" + d.sheetIdCleaned.length + " حرف)"
+            : "")
+        : "غير موجود";
       const lines = [
         "GOOGLE_PRIVATE_KEY: " + (d.hasPrivateKey
           ? "موجود (" + d.privateKeyLength + " حرف، صيغة " + (d.privateKeyValid ? "صحيحة" : "غلوطة") + ")"
@@ -129,9 +151,7 @@ export default function AdminGoogleSheetsPage() {
         "GOOGLE_SERVICE_ACCOUNT_EMAIL: " + (d.hasServiceEmail
           ? "موجود (@" + d.serviceEmailDomain + ")"
           : "غير موجود"),
-        "GOOGLE_SHEET_ID: " + (d.hasSheetId
-          ? "موجود (" + d.sheetIdLength + " حرف)"
-          : "غير موجود"),
+        "GOOGLE_SHEET_ID: " + sheetIdLine,
       ].join("\n");
       alert("تشخيص Google Sheets\n\n" + lines);
     } catch { toast.error("خطأ في التشخيص"); }
@@ -223,9 +243,17 @@ export default function AdminGoogleSheetsPage() {
           sub={envStatus.hasServiceEmail ? "موجود فـ .env" : "GOOGLE_SERVICE_ACCOUNT_EMAIL مفقود"}
         />
         <StatusBadge
-          ok={envStatus.hasSheetId || form.sheet_id.length > 0}
-          label={envStatus.hasSheetId || form.sheet_id.length > 0 ? "GOOGLE_SHEET_ID" : "GOOGLE_SHEET_ID مفقود"}
-          sub={envStatus.hasSheetId || form.sheet_id.length > 0 ? "موجود فـ .env أو الإعدادات" : "زيده فـ .env.local أو الإعدادات"}
+          ok={envStatus.hasSheetId && !envStatus.sheetIdWarning}
+          label={
+            !envStatus.hasSheetId ? "GOOGLE_SHEET_ID مفقود"
+            : envStatus.sheetIdWarning ? "GOOGLE_SHEET_ID — تحذير"
+            : "GOOGLE_SHEET_ID"
+          }
+          sub={
+            !envStatus.hasSheetId ? "زيده فـ .env.local أو الإعدادات"
+            : envStatus.sheetIdWarning ? envStatus.sheetIdWarning
+            : "موجود فـ .env أو الإعدادات"
+          }
         />
       </div>
 
@@ -251,7 +279,7 @@ export default function AdminGoogleSheetsPage() {
             onChange={e => setForm(f => ({ ...f, sheet_id: e.target.value }))}
             placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms"
           />
-          <p className="text-xs text-brand-gray mt-1">الـ ID ديال الـ Google Sheet من الـ URL</p>
+          <p className="text-xs text-brand-gray mt-1">الـ ID ديال الـ Google Sheet من الـ URL — مثال: 44 حرف تقريباً</p>
         </div>
 
         <div>
@@ -270,12 +298,8 @@ export default function AdminGoogleSheetsPage() {
 
         <div className="bg-brand-light p-3 text-xs text-brand-gray space-y-1">
           <p className="font-bold text-brand-navy">🔐 الأمان:</p>
-          <p>
-            GOOGLE_PRIVATE_KEY خاص يكون فـ .env.local فقط — ما تدخلوش هنا أبداً.
-          </p>
-          <p>
-            GOOGLE_SERVICE_ACCOUNT_EMAIL و GOOGLE_SHEET_ID يمكن تكونو فـ .env.local أو تسجلوهم هنا.
-          </p>
+          <p>GOOGLE_PRIVATE_KEY خاص يكون فـ .env.local فقط — ما تدخلوش هنا أبداً.</p>
+          <p>GOOGLE_SERVICE_ACCOUNT_EMAIL و GOOGLE_SHEET_ID يمكن تكونو فـ .env.local أو تسجلوهم هنا.</p>
         </div>
 
         <div className="flex gap-2 flex-wrap">
@@ -311,7 +335,6 @@ export default function AdminGoogleSheetsPage() {
             <Bug className="h-3.5 w-3.5" />
             تشخيص
           </button>
-
         </div>
 
         {!canTest && (
@@ -336,7 +359,7 @@ export default function AdminGoogleSheetsPage() {
 
         {syncResult && (
           <div className="mb-4 space-y-2">
-            <div className={`p-3 text-sm border ${syncResult.failed === 0 ? "bg-green-50 border-green-200 text-green-800" : "bg-yellow-50 border-yellow-200 text-yellow-800"}`}>
+            <div className={"p-3 text-sm border " + (syncResult.failed === 0 ? "bg-green-50 border-green-200 text-green-800" : "bg-yellow-50 border-yellow-200 text-yellow-800")}>
               {syncResult.total === 0
                 ? "ما كاين حتى طلب محتاج مزامنة — كلشي متزامن"
                 : `تمت المزامنة: ${syncResult.synced} نجح، ${syncResult.failed} فشل، من أصل ${syncResult.total} طلب`}
@@ -364,7 +387,7 @@ export default function AdminGoogleSheetsPage() {
           title={!canTest ? "خاصك تهيئ Google Sheets أولاً" : ""}
           className="flex items-center gap-2 bg-brand-navy text-white font-bold px-5 py-2.5 text-sm hover:bg-opacity-85 disabled:opacity-50 transition-colors"
         >
-          <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+          <RefreshCw className={"h-4 w-4 " + (syncing ? "animate-spin" : "")} />
           {syncing ? "جاري المزامنة..." : "مزامنة الطلبات القديمة"}
         </button>
 

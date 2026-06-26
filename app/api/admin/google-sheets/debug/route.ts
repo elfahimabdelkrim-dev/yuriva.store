@@ -1,23 +1,20 @@
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
+import { cleanSheetId, sheetIdWarning } from "@/lib/google-sheets";
 
 /**
  * GET /api/admin/google-sheets/debug
- *
- * Safe server-side debug endpoint — returns only boolean flags and non-sensitive
- * metadata. Never returns actual secret values.
- *
- * Supported env var names:
- *   GOOGLE_PRIVATE_KEY
- *   GOOGLE_SERVICE_ACCOUNT_EMAIL  (also accepts GOOGLE_CLIENT_EMAIL)
- *   GOOGLE_SHEET_ID
+ * Safe server-side debug — returns only boolean flags and non-sensitive metadata.
+ * Never returns actual secret values.
  */
 export async function GET() {
   const privateKeyRaw = process.env.GOOGLE_PRIVATE_KEY ?? "";
   const serviceEmail =
     process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || process.env.GOOGLE_CLIENT_EMAIL || "";
-  const sheetId = process.env.GOOGLE_SHEET_ID ?? "";
+  const sheetIdRaw = process.env.GOOGLE_SHEET_ID ?? "";
+  const sheetIdCleaned = cleanSheetId(sheetIdRaw);
+  const idWarn = sheetIdWarning(sheetIdCleaned);
 
   // Normalize key to check format (never returned to client)
   const normalizedKey = privateKeyRaw.replace(/\\n/g, "\n").replace(/^["'\s]+|["'\s]+$/g, "");
@@ -26,7 +23,7 @@ export async function GET() {
     {
       hasPrivateKey: privateKeyRaw.length > 0,
       hasServiceEmail: serviceEmail.length > 0,
-      hasSheetId: sheetId.length > 0,
+      hasSheetId: sheetIdRaw.length > 0,
 
       // Non-secret debug info
       privateKeyLength: privateKeyRaw.length,
@@ -39,7 +36,9 @@ export async function GET() {
       serviceEmailDomain: serviceEmail.includes("@")
         ? serviceEmail.split("@")[1]
         : null,
-      sheetIdLength: sheetId.length,
+      sheetIdLength: sheetIdRaw.length,
+      sheetIdCleaned,
+      sheetIdWarning: idWarn,
     },
     { headers: { "Cache-Control": "no-store" } }
   );

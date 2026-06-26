@@ -111,6 +111,40 @@ async function fetchGoogleAccessToken(email: string, privateKey: string): Promis
   return data.access_token;
 }
 
+// ── Sheet ID cleaner ──────────────────────────────────────────────────────
+
+/**
+ * Extract a clean Google Spreadsheet ID from whatever the user pasted:
+ *   - Full URL: https://docs.google.com/spreadsheets/d/{ID}/edit#gid=0
+ *   - Doubled ID: {ID}{ID}  (copy-paste accident)
+ *   - Already clean: {ID}
+ * The real ID is ~44 chars of [A-Za-z0-9_-].
+ */
+export function cleanSheetId(raw: string): string {
+  const trimmed = raw.trim().replace(/\s+/g, "");
+  if (!trimmed) return "";
+
+  // Extract from a URL containing /spreadsheets/d/{ID}
+  const urlMatch = trimmed.match(/\/spreadsheets\/d\/([A-Za-z0-9_-]+)/);
+  if (urlMatch) return urlMatch[1];
+
+  // Pure ID chars only — detect accidental duplication (even length, first half = second half)
+  if (/^[A-Za-z0-9_-]+$/.test(trimmed) && trimmed.length % 2 === 0) {
+    const half = trimmed.length / 2;
+    if (trimmed.slice(0, half) === trimmed.slice(half)) return trimmed.slice(0, half);
+  }
+
+  return trimmed;
+}
+
+/** Return a human-readable warning if the (already-cleaned) ID looks wrong, else null */
+export function sheetIdWarning(id: string): string | null {
+  if (!id) return "فارغ";
+  if (id.length < 20) return `قصير جداً (${id.length} حرف) — تحقق من القيمة`;
+  if (id.length > 60) return `طويل جداً (${id.length} حرف) — ربما يحتوي على URL أو تكرار`;
+  return null;
+}
+
 // ── Public config helpers ──────────────────────────────────────────────────
 
 export function isConfigured(): boolean {
@@ -120,12 +154,17 @@ export function isConfigured(): boolean {
 export function getConfigStatus() {
   const rawKey = process.env.GOOGLE_PRIVATE_KEY ?? "";
   const normalizedKey = rawKey ? normalizePrivateKey(rawKey) : "";
+  const rawSheetId = process.env.GOOGLE_SHEET_ID ?? "";
+  const cleanedSheetId = cleanSheetId(rawSheetId);
   return {
     hasPrivateKey: rawKey.length > 0,
     hasServiceEmail: !!(getServiceEmail()),
-    hasSheetId: !!(process.env.GOOGLE_SHEET_ID),
+    hasSheetId: rawSheetId.length > 0,
     privateKeyLength: rawKey.length,
     privateKeyValid: normalizedKey.includes("-----BEGIN"),
+    sheetIdLength: rawSheetId.length,
+    sheetIdCleaned: cleanedSheetId,
+    sheetIdWarning: sheetIdWarning(cleanedSheetId),
   };
 }
 
@@ -145,8 +184,10 @@ async function getAuthAndSheets(config?: SyncConfig): Promise<{ sheets: SheetsCl
   const email = config?.serviceEmail || getServiceEmail();
   if (!email) throw new Error("GOOGLE_SERVICE_ACCOUNT_EMAIL missing");
 
-  const sheetId = config?.sheetId || process.env.GOOGLE_SHEET_ID;
-  if (!sheetId) throw new Error("GOOGLE_SHEET_ID missing");
+  const rawSheetId = config?.sheetId || process.env.GOOGLE_SHEET_ID || "";
+  if (!rawSheetId) throw new Error("GOOGLE_SHEET_ID missing");
+  const sheetId = cleanSheetId(rawSheetId);
+  if (!sheetId) throw new Error("GOOGLE_SHEET_ID missing after cleaning");
 
   const privateKey = normalizePrivateKey(privateKeyRaw);
   if (!privateKey.includes("-----BEGIN")) {
