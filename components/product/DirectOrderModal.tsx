@@ -234,9 +234,18 @@ export default function DirectOrderModal({
       } else {
         toast.success("تسجل الطلب بنجاح!");
         onClose();
-        router.push(
-          `/thank-you?order_id=${orderId}&name=${encodeURIComponent(form.full_name.trim())}&phone=${encodeURIComponent(form.phone.trim())}&city=${encodeURIComponent(form.city.trim())}&total=${total}`
-        );
+        const qs = new URLSearchParams({
+          order_id: orderId,
+          name: form.full_name.trim(),
+          phone: form.phone.trim(),
+          city: form.city.trim(),
+          address: form.address.trim(),
+          product: product.title,
+          size: form.size || "",
+          qty: String(form.quantity),
+          total: String(total),
+        });
+        router.push(`/thank-you?${qs.toString()}`);
       }
     } catch {
       toast.error("خطأ في الاتصال، جرب من جديد");
