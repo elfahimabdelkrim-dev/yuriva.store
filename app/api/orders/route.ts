@@ -9,9 +9,30 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
   ]);
 }
 
+/** Get client IP from standard proxy headers */
+function getClientIp(req: NextRequest): string | undefined {
+  return (
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    req.headers.get("x-real-ip") ||
+    undefined
+  );
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const { order, items } = await req.json() as { order: Omit<Order, "id">; items: OrderItem[] };
+    const body = await req.json() as {
+      order: Omit<Order, "id">;
+      items: OrderItem[];
+      meta?: {
+        event_id?: string;
+        fbp?: string;
+        fbc?: string;
+        event_source_url?: string;
+      };
+    };
+
+    const { order, items } = body;
+    const metaTracking = body.meta ?? {};
 
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
       const order_id = `ORD-${Date.now()}`;
@@ -68,9 +89,7 @@ export async function POST(req: NextRequest) {
       changed_by: "system",
     });
 
-    // Google Sheets sync
-    // Awaited with an 8-second timeout so Vercel serverless does not cut it off.
-    // Result is written back to the orders row so failed syncs can be retried later.
+    // ── Google Sheets sync ─────────────────────────────────────────────────
     try {
       const { isConfigured, syncOrderToSheet } = await import("@/lib/google-sheets");
       type SyncResult = { ok: boolean; error?: string; stage?: string };
@@ -97,7 +116,6 @@ export async function POST(req: NextRequest) {
         console.log("[Google Sheets] Not configured — skipping sync for order", newOrder.id);
       }
     } catch (sheetErr) {
-      // Sheets errors must never block the order response
       console.error("[Google Sheets] Exception during sync for order", newOrder.id, sheetErr);
       supabase
         .from("orders")
@@ -107,6 +125,56 @@ export async function POST(req: NextRequest) {
         })
         .eq("id", newOrder.id)
         .then(() => { /* ignore */ });
+    }
+
+    // ── Meta CAPI Purchase ─────────────────────────────────────────────────
+    // Runs server-side — access token never reaches the browser.
+    // A failure here NEVER blocks or changes the order response.
+    const pixelId = process.env.NEXT_PUBLIC_META_PIXEL_ID;
+    const accessToken = process.env.META_ACCESS_TOKEN;
+
+    if (pixelId && accessToken && metaTracking.event_id) {
+      const firstItem = items[0];
+      const numItems = items.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+
+      // Fire and forget with timeout — don't await in the response path
+      void (async () => {
+        try {
+          const { sendCapiPurchase } = await import("@/lib/meta-capi");
+          const result = await withTimeout(
+            sendCapiPurchase({
+              pixelId,
+              accessToken,
+              testEventCode: process.env.META_TEST_EVENT_CODE,
+              eventId: metaTracking.event_id!,
+              orderId: newOrder.id,
+              value: order.total_amount ?? 0,
+              productId: firstItem?.product_id ?? "",
+              productTitle: firstItem?.product_title ?? "",
+              numItems,
+              phone: order.phone,
+              city: order.city,
+              clientIp: getClientIp(req),
+              userAgent: req.headers.get("user-agent") || undefined,
+              fbp: metaTracking.fbp,
+              fbc: metaTracking.fbc,
+              eventSourceUrl: metaTracking.event_source_url,
+            }),
+            6000,
+            { ok: false, error: "capi_timeout" }
+          );
+          if (!result.ok) {
+            // Safe log — sendCapiPurchase already redacts the token
+            console.error("[Meta CAPI] Purchase failed for order", newOrder.id, ":", result.error);
+          } else {
+            console.log("[Meta CAPI] Purchase sent for order", newOrder.id, "eventId=", metaTracking.event_id);
+          }
+        } catch (capiErr) {
+          console.error("[Meta CAPI] Exception for order", newOrder.id, ":", String(capiErr).slice(0, 200));
+        }
+      })();
+    } else if (pixelId && !accessToken) {
+      console.log("[Meta CAPI] META_ACCESS_TOKEN not set — skipping CAPI for order", newOrder.id);
     }
 
     return NextResponse.json({ success: true, order_id: newOrder.id });

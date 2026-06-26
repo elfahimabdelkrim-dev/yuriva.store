@@ -6,6 +6,7 @@ import type { Product, ProductColor } from "@/types";
 import { validateMoroccanPhone, formatPrice } from "@/lib/utils";
 import { buildOrderWhatsAppURL } from "@/lib/whatsapp";
 import { siteConfig } from "@/config/site";
+import { fbqInitiateCheckout, fbqPurchase, fbqContact, getCookie } from "@/lib/meta-pixel";
 import toast from "react-hot-toast";
 
 interface Props {
@@ -52,7 +53,7 @@ export default function DirectOrderModal({
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [submitting, setSubmitting] = useState(false);
 
-  // Close on Escape
+  // ── Close on Escape + lock body scroll ──────────────────────────────────
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", handler);
@@ -62,6 +63,16 @@ export default function DirectOrderModal({
       document.body.style.overflow = "";
     };
   }, [onClose]);
+
+  // ── InitiateCheckout — fires once when the modal opens ───────────────────
+  useEffect(() => {
+    fbqInitiateCheckout(
+      { id: product.id, title: product.title, price: product.price },
+      defaultQuantity,
+      defaultSize || undefined
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const set = (field: keyof FormState, value: string | number) =>
     setForm((f) => ({ ...f, [field]: value }));
@@ -94,8 +105,15 @@ export default function DirectOrderModal({
     if (!validate()) return;
     setSubmitting(true);
 
+    // Generate a unique event_id for Purchase deduplication (browser + CAPI share this)
+    const purchaseEventId = `purchase_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+
+    // Read Meta cookies from browser for CAPI user_data enrichment
+    const fbp = getCookie("_fbp");
+    const fbc = getCookie("_fbc");
+    const eventSourceUrl = typeof window !== "undefined" ? window.location.href : "";
+
     try {
-      // Split full name into first + last
       const nameParts = form.full_name.trim().split(/\s+/);
       const firstName = nameParts[0] ?? "";
       const lastName = nameParts.slice(1).join(" ") || firstName;
@@ -128,6 +146,13 @@ export default function DirectOrderModal({
             total,
           },
         ],
+        // Meta tracking — used server-side for CAPI deduplication
+        meta: {
+          event_id: purchaseEventId,
+          fbp: fbp || undefined,
+          fbc: fbc || undefined,
+          event_source_url: eventSourceUrl || undefined,
+        },
       };
 
       const res = await fetch("/api/orders", {
@@ -146,8 +171,16 @@ export default function DirectOrderModal({
 
       const orderId = data.order_id ?? "";
 
+      // ── Browser Purchase pixel (same eventId as CAPI) ──────────────────
+      fbqPurchase(
+        { id: product.id, title: product.title, price: product.price },
+        orderId,
+        total,
+        form.quantity,
+        purchaseEventId
+      );
+
       if (mode === "whatsapp") {
-        // Build WhatsApp URL with order details
         const colorsLabel = (() => {
           if (product.is_pack && packColors) {
             return packColors
@@ -157,6 +190,7 @@ export default function DirectOrderModal({
           }
           return selectedColor?.label ?? "غير محدد";
         })();
+        void colorsLabel; // used for WhatsApp message in buildOrderWhatsAppURL
 
         const url = buildOrderWhatsAppURL(
           {
@@ -177,9 +211,7 @@ export default function DirectOrderModal({
                 size: form.size,
                 color: selectedColor ?? undefined,
                 pack_colors: product.is_pack && packColors
-                  ? packColors
-                      .filter(Boolean)
-                      .map((c, i) => ({ pieceIndex: i, color: c! }))
+                  ? packColors.filter(Boolean).map((c, i) => ({ pieceIndex: i, color: c! }))
                   : undefined,
                 is_pack: product.is_pack,
                 pack_pieces: product.pack_pieces,
@@ -194,9 +226,12 @@ export default function DirectOrderModal({
 
         toast.success("تحفظ الطلب! جاري فتح واتساب...");
         onClose();
-        setTimeout(() => window.open(url, "_blank"), 300);
+        setTimeout(() => {
+          // Fire Contact event when WhatsApp opens (after order is saved)
+          fbqContact();
+          window.open(url, "_blank");
+        }, 300);
       } else {
-        // COD — redirect to thank-you
         toast.success("تسجل الطلب بنجاح!");
         onClose();
         router.push(

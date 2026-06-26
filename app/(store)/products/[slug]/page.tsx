@@ -8,6 +8,7 @@ import ProductInfo from "@/components/product/ProductInfo";
 import ProductAccordion from "@/components/product/ProductAccordion";
 import ProductCard from "@/components/product/ProductCard";
 import StarRating from "@/components/ui/StarRating";
+import ProductViewContent from "@/components/product/ProductViewContent";
 import { JsonLdProduct, JsonLdBreadcrumb } from "@/components/seo/JsonLd";
 import { siteConfig } from "@/config/site";
 export const dynamic = "force-dynamic";
@@ -139,6 +140,12 @@ export default async function ProductPage({ params }: Props) {
 
   return (
     <>
+      {/* Client-side ViewContent fires once on mount for Meta Pixel deduplication */}
+      <ProductViewContent
+        productId={product.id}
+        productTitle={product.title}
+        productPrice={product.price}
+      />
       <JsonLdProduct product={product} />
       <JsonLdBreadcrumb
         items={[
