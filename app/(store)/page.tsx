@@ -91,13 +91,30 @@ export default async function HomePage() {
   const bgColor = (key: string, fallback: string) => s(key).bg_color || fallback;
   const isOn    = (key: string) => s(key).is_active !== false;
 
-  // ── Section render order (from Supabase sort_order, else defaults) ─────
-  const sectionOrder = Object.values(sections)
-    .sort((a, b) => a.sort_order - b.sort_order)
-    .map((sec) => sec.section_key);
+  // ── Section render order — fixed sequence ─────────────────────────────
+  // Desired: best_sellers → offers → trust_badges → reviews → rest
+  const FIXED_SECTION_ORDER = [
+    "best_sellers",
+    "offers",
+    "trust_badges",
+    "reviews",
+    "categories",
+    "featured",
+    "new_arrivals",
+    "about_yuriva",
+    "why_choose_us",
+    "how_to_order",
+    "whatsapp_cta",
+    "final_cta",
+  ];
+  const knownKeys = new Set([...FIXED_SECTION_ORDER, "offers_banner", "hero"]);
+  const extraKeys = Object.keys(sections).filter((k) => !knownKeys.has(k));
+  const sectionOrder = [...FIXED_SECTION_ORDER, ...extraKeys].filter((k) => k in sections);
 
   // ── Render each section by key ─────────────────────────────────────────
   function renderSection(key: string) {
+    // offers_banner removed from homepage — dark "عرض محدود اليوم فقط" banner
+    if (key === "offers_banner") return null;
     if (!isOn(key)) return null;
 
     switch (key) {

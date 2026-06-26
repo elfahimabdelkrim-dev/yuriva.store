@@ -120,7 +120,7 @@ export const SECTION_DEFAULTS: Record<string, Omit<HomepageSection, "id" | "sect
   featured:     { title: "أبرز منتجاتنا",                  subtitle: "جودة مضمونة — توصيل مجاني — دفع عند الاستلام",              is_active: true, sort_order: 2 },
   trust_badges: { title: "علاش YURIVA",                                                                                             is_active: true, sort_order: 3 },
   best_sellers: { title: "الأكثر مبيعاً",                  subtitle: "اختيار الزبناء المغاربة",                                    is_active: true, sort_order: 4 },
-  offers_banner:{ title: "عرض محدود اليوم فقط",            subtitle: "الدفع عند الاستلام — توصيل مجاني لجميع مدن المغرب",        label: "عرض محدود", button_text: "شوف المنتجات", button_link: "/products", is_active: true, sort_order: 5 },
+  offers_banner:{ title: "عرض محدود اليوم فقط",            subtitle: "الدفع عند الاستلام — توصيل مجاني لجميع مدن المغرب",        label: "عرض محدود", button_text: "شوف المنتجات", button_link: "/products", is_active: false, sort_order: 5 },
   offers:       { title: "أحسن العروض",                    subtitle: "منتجات بخصومات مميزة",                                       is_active: true, sort_order: 6 },
   new_arrivals: { title: "الجديد في المتجر",               subtitle: "آخر ما وصل",                                                  is_active: true, sort_order: 7 },
   reviews:      { title: "ماذا يقولون عنا؟",               subtitle: "آراء زبناء YURIVA الحقيقيين",                                is_active: true, sort_order: 8 },
