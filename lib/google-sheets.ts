@@ -136,7 +136,6 @@ interface SyncConfig {
   serviceEmail?: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SheetsClient = any;
 
 async function getAuthAndSheets(config?: SyncConfig): Promise<{ sheets: SheetsClient; sheetId: string }> {
