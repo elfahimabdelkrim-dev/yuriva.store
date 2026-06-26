@@ -215,7 +215,7 @@ export default function ProductInfo({ product }: ProductInfoProps) {
           {/* اطلب عبر واتساب — saves order first, then opens WhatsApp */}
           <button
             onClick={() => openModal("whatsapp")}
-            className="w-full border-2 border-[#25D366] text-[#25D366] font-bold py-4 flex items-center justify-center gap-2 hover:bg-[#25D366] hover:text-white transition-all text-base"
+            className="w-full border-2 border-[#25D366] text-brand-navy font-bold py-4 flex items-center justify-center gap-2 hover:bg-[#25D366] hover:text-white transition-all text-base"
           >
             <WhatsAppIcon className="h-5 w-5" />
             اطلب عبر واتساب
