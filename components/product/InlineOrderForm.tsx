@@ -19,13 +19,10 @@ function WhatsAppIcon({ className = "h-5 w-5" }: { className?: string }) {
 
 interface Props {
   product: Product;
-  selectedSize: string;
-  quantity: number;
   selectedColor: ProductColor | null;
   packColors: (ProductColor | null)[];
 }
 
-// Only 3 visible fields — city and note removed
 interface FormState {
   full_name: string;
   phone: string;
@@ -34,20 +31,25 @@ interface FormState {
 
 export default function InlineOrderForm({
   product,
-  selectedSize,
-  quantity,
   selectedColor,
   packColors,
 }: Props) {
   const router = useRouter();
 
+  // Size is now internal to the form
+  const [selectedSize, setSelectedSize] = useState("");
+  const [sizeError,    setSizeError]    = useState("");
+
+  // Quantity is always 1 — no selector
+  const quantity = 1;
+
   const [form, setForm] = useState<FormState>({
     full_name: "",
-    phone: "",
-    address: "",
+    phone:     "",
+    address:   "",
   });
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FormState, string>>>({});
-  const [submitting, setSubmitting] = useState(false);
+  const [submitting,  setSubmitting]  = useState(false);
 
   const set = (field: keyof FormState, value: string) =>
     setForm((f) => ({ ...f, [field]: value }));
@@ -55,11 +57,21 @@ export default function InlineOrderForm({
   const clearErr = (field: keyof FormState) =>
     setFieldErrors((e) => ({ ...e, [field]: undefined }));
 
+  const safeSizes = Array.isArray(product.sizes) ? product.sizes : [];
+
   const validate = (): boolean => {
     const errs: Partial<Record<keyof FormState, string>> = {};
     if (!form.full_name.trim()) errs.full_name = "الاسم الكامل مطلوب";
     if (!validateMoroccanPhone(form.phone)) errs.phone = "دخل رقم هاتف صحيح (06، 07، +212...)";
     if (!form.address.trim()) errs.address = "العنوان مطلوب";
+
+    // Size validation inside the form
+    if (safeSizes.length > 0 && !selectedSize) {
+      setSizeError("خاصك تختار القياس");
+      setFieldErrors(errs);
+      return false;
+    }
+    setSizeError("");
     setFieldErrors(errs);
     return Object.keys(errs).length === 0;
   };
@@ -77,13 +89,6 @@ export default function InlineOrderForm({
   /** Create order via API — returns { orderId, total } or null on failure */
   const createOrder = async (mode: "cod" | "whatsapp") => {
     if (!validate()) return null;
-
-    const safeSizes = Array.isArray(product.sizes) ? product.sizes : [];
-    if (safeSizes.length > 0 && !selectedSize) {
-      toast.error("خاصك تختار القياس أولاً");
-      return null;
-    }
-
     setSubmitting(true);
 
     const purchaseEventId = `purchase_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -108,9 +113,9 @@ export default function InlineOrderForm({
           customer_first_name: firstName,
           customer_last_name:  lastName,
           phone:               form.phone.trim(),
-          city:                "",          // city field removed from UI
+          city:                "",
           address:             form.address.trim(),
-          notes:               undefined,   // note field removed from UI
+          notes:               undefined,
           total_amount:        total,
           delivery_price:      0,
           payment_method:      "cod" as const,
@@ -151,7 +156,6 @@ export default function InlineOrderForm({
 
       const orderId = data.order_id ?? "";
 
-      // Browser Purchase pixel — same eventId as server CAPI for deduplication
       fbqPurchase(
         { id: product.id, title: product.title, price: product.price },
         orderId,
@@ -213,7 +217,7 @@ export default function InlineOrderForm({
               product.is_pack && packColors
                 ? packColors.filter(Boolean).map((c, i) => ({ pieceIndex: i, color: c! }))
                 : undefined,
-            is_pack:    product.is_pack,
+            is_pack:     product.is_pack,
             pack_pieces: product.pack_pieces,
           },
         ],
@@ -240,6 +244,30 @@ export default function InlineOrderForm({
   return (
     <div className="mt-6 pt-6 border-t border-gray-100 space-y-4">
       <h3 className="font-black text-brand-navy text-base">أكمل الطلب</h3>
+
+      {/* ── المقاس — size selector, first field ── */}
+      {safeSizes.length > 0 && (
+        <div>
+          <label className={lbl}>المقاس *</label>
+          <div className="flex flex-wrap gap-2">
+            {safeSizes.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => { setSelectedSize(s); setSizeError(""); }}
+                className={`px-4 py-2 border text-sm font-bold transition-all rounded-sm ${
+                  selectedSize === s
+                    ? "bg-brand-navy text-white border-brand-navy"
+                    : "border-gray-300 text-brand-navy hover:border-brand-navy"
+                }`}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+          {sizeError && <p className={errCls}>{sizeError}</p>}
+        </div>
+      )}
 
       {/* Total preview */}
       <div className="bg-brand-light p-3 flex items-center justify-between rounded-sm">
@@ -294,7 +322,7 @@ export default function InlineOrderForm({
           type="button"
           onClick={submitCod}
           disabled={submitting}
-          className="btn-purchase-animate w-full bg-[#16A34A] text-white font-bold py-4 flex items-center justify-center gap-2 hover:bg-[#15803d] hover:scale-[1.02] active:scale-95 transition-all text-base disabled:opacity-60 disabled:[animation:none] rounded-sm"
+          className="btn-purchase-animate w-full bg-[#16A34A] text-white font-bold py-4 flex items-center justify-center gap-2 hover:bg-[#15803d] active:scale-95 transition-all text-base disabled:opacity-60 disabled:[animation:none] rounded-sm"
         >
           {submitting ? (
             <Loader2 className="h-5 w-5 animate-spin" />
