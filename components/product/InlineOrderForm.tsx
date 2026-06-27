@@ -325,7 +325,7 @@ export default function InlineOrderForm({
           type="button"
           onClick={submitCod}
           disabled={submitting}
-          className="w-full bg-brand-gold text-white font-bold py-4 flex items-center justify-center gap-2 hover:bg-opacity-85 transition-all text-base disabled:opacity-60 rounded-sm"
+          className="btn-purchase-animate w-full bg-brand-gold text-white font-bold py-4 flex items-center justify-center gap-2 hover:scale-[1.02] hover:brightness-110 active:scale-95 transition-all text-base disabled:opacity-60 disabled:[animation:none] rounded-sm"
         >
           {submitting ? (
             <Loader2 className="h-5 w-5 animate-spin" />

@@ -122,3 +122,33 @@ body {
     padding-bottom: env(safe-area-inset-bottom);
   }
 }
+
+/* ── Purchase button animation ──────────────────────────────────────────── */
+/* Soft glow-pulse: scale + shadow breathes every 2.4 s                      */
+@keyframes btn-purchase-pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(201, 168, 76, 0.45);   /* brand-gold @ 45% */
+  }
+  50% {
+    transform: scale(1.022);
+    box-shadow: 0 0 0 8px rgba(201, 168, 76, 0);
+  }
+}
+
+.btn-purchase-animate {
+  animation: btn-purchase-pulse 2.4s ease-in-out infinite;
+}
+
+/* Pause animation while the button is active / being tapped */
+.btn-purchase-animate:active {
+  animation: none;
+  transform: scale(0.97);
+}
+
+/* Respect user's motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .btn-purchase-animate {
+    animation: none;
+  }
+}
