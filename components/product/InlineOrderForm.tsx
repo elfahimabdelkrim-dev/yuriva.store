@@ -269,12 +269,6 @@ export default function InlineOrderForm({
         </div>
       )}
 
-      {/* Total preview */}
-      <div className="bg-brand-light p-3 flex items-center justify-between rounded-sm">
-        <span className="text-sm text-brand-gray">المجموع الكلي</span>
-        <span className="font-black text-brand-navy text-lg">{formatPrice(total)}</span>
-      </div>
-
       {/* الاسم الكامل */}
       <div>
         <label className={lbl}>الاسم الكامل *</label>
@@ -313,6 +307,12 @@ export default function InlineOrderForm({
           onChange={(e) => { set("address", e.target.value); clearErr("address"); }}
         />
         {fieldErrors.address && <p className={errCls}>{fieldErrors.address}</p>}
+      </div>
+
+      {/* Total preview */}
+      <div className="bg-brand-light p-3 flex items-center justify-between rounded-sm">
+        <span className="text-sm text-brand-gray">المجموع الكلي</span>
+        <span className="font-black text-brand-navy text-lg">{formatPrice(total)}</span>
       </div>
 
       {/* Submit buttons */}
