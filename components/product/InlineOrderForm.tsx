@@ -25,12 +25,11 @@ interface Props {
   packColors: (ProductColor | null)[];
 }
 
+// Only 3 visible fields — city and note removed
 interface FormState {
   full_name: string;
   phone: string;
-  city: string;
   address: string;
-  note: string;
 }
 
 export default function InlineOrderForm({
@@ -45,9 +44,7 @@ export default function InlineOrderForm({
   const [form, setForm] = useState<FormState>({
     full_name: "",
     phone: "",
-    city: "",
     address: "",
-    note: "",
   });
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -62,7 +59,6 @@ export default function InlineOrderForm({
     const errs: Partial<Record<keyof FormState, string>> = {};
     if (!form.full_name.trim()) errs.full_name = "الاسم الكامل مطلوب";
     if (!validateMoroccanPhone(form.phone)) errs.phone = "دخل رقم هاتف صحيح (06، 07، +212...)";
-    if (!form.city.trim()) errs.city = "المدينة مطلوبة";
     if (!form.address.trim()) errs.address = "العنوان مطلوب";
     setFieldErrors(errs);
     return Object.keys(errs).length === 0;
@@ -78,11 +74,10 @@ export default function InlineOrderForm({
     return "[]";
   };
 
-  /** Create the order, fire browser Pixel, return { orderId, total } or null on error */
+  /** Create order via API — returns { orderId, total } or null on failure */
   const createOrder = async (mode: "cod" | "whatsapp") => {
     if (!validate()) return null;
 
-    // Guard: size required
     const safeSizes = Array.isArray(product.sizes) ? product.sizes : [];
     if (safeSizes.length > 0 && !selectedSize) {
       toast.error("خاصك تختار القياس أولاً");
@@ -106,47 +101,46 @@ export default function InlineOrderForm({
     try {
       const nameParts = form.full_name.trim().split(/\s+/);
       const firstName = nameParts[0] ?? "";
-      const lastName = nameParts.slice(1).join(" ") || firstName;
+      const lastName  = nameParts.slice(1).join(" ") || firstName;
 
       const payload = {
         order: {
           customer_first_name: firstName,
-          customer_last_name: lastName,
-          phone: form.phone.trim(),
-          city: form.city.trim(),
-          address: form.address.trim(),
-          notes: form.note.trim() || undefined,
-          total_amount: total,
-          delivery_price: 0,
-          payment_method: "cod" as const,
-          status: "جديد" as const,
+          customer_last_name:  lastName,
+          phone:               form.phone.trim(),
+          city:                "",          // city field removed from UI
+          address:             form.address.trim(),
+          notes:               undefined,   // note field removed from UI
+          total_amount:        total,
+          delivery_price:      0,
+          payment_method:      "cod" as const,
+          status:              "جديد" as const,
           source: mode === "whatsapp" ? "whatsapp_direct" : "direct_cod",
         },
         items: [
           {
-            product_id: product.id,
+            product_id:    product.id,
             product_title: product.title,
             product_price: product.price,
             quantity,
-            size: selectedSize,
+            size:   selectedSize,
             colors: buildColorsJson(),
             total,
           },
         ],
         meta: {
-          event_id: purchaseEventId,
-          fbp: fbp || undefined,
-          fbc: fbc || undefined,
+          event_id:         purchaseEventId,
+          fbp:              fbp  || undefined,
+          fbc:              fbc  || undefined,
           event_source_url: eventSourceUrl || undefined,
         },
       };
 
-      const res = await fetch("/api/orders", {
+      const res  = await fetch("/api/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-
       const data = await res.json() as { success: boolean; order_id?: string; error?: string };
 
       if (!data.success) {
@@ -180,14 +174,14 @@ export default function InlineOrderForm({
     const { orderId, total } = result;
     const qs = new URLSearchParams({
       order_id: orderId,
-      name: form.full_name.trim(),
-      phone: form.phone.trim(),
-      city: form.city.trim(),
-      address: form.address.trim(),
-      product: product.title,
-      size: selectedSize || "",
-      qty: String(quantity),
-      total: String(total),
+      name:     form.full_name.trim(),
+      phone:    form.phone.trim(),
+      city:     "",
+      address:  form.address.trim(),
+      product:  product.title,
+      size:     selectedSize || "",
+      qty:      String(quantity),
+      total:    String(total),
     });
     router.push(`/thank-you?${qs.toString()}`);
   };
@@ -200,26 +194,26 @@ export default function InlineOrderForm({
     const url = buildOrderWhatsAppURL(
       {
         customer_name: form.full_name.trim(),
-        phone: form.phone.trim(),
-        city: form.city.trim(),
-        address: form.address.trim(),
-        notes: form.note.trim(),
+        phone:         form.phone.trim(),
+        city:          "",
+        address:       form.address.trim(),
+        notes:         "",
         items: [
           {
-            id: orderId,
-            product_id: product.id,
+            id:            orderId,
+            product_id:    product.id,
             product_title: product.title,
-            product_slug: product.slug,
+            product_slug:  product.slug,
             product_image: product.main_image,
-            price: product.price,
+            price:         product.price,
             quantity,
-            size: selectedSize,
-            color: selectedColor ?? undefined,
+            size:          selectedSize,
+            color:         selectedColor ?? undefined,
             pack_colors:
               product.is_pack && packColors
                 ? packColors.filter(Boolean).map((c, i) => ({ pieceIndex: i, color: c! }))
                 : undefined,
-            is_pack: product.is_pack,
+            is_pack:    product.is_pack,
             pack_pieces: product.pack_pieces,
           },
         ],
@@ -238,11 +232,10 @@ export default function InlineOrderForm({
     }, 300);
   };
 
-  const inp =
-    "w-full border border-gray-300 focus:border-brand-navy px-3 py-2.5 text-sm outline-none transition-colors rounded-sm";
-  const lbl = "block text-sm font-bold text-brand-navy mb-1";
+  const inp    = "w-full border border-gray-300 focus:border-brand-navy px-3 py-2.5 text-sm outline-none transition-colors rounded-sm";
+  const lbl    = "block text-sm font-bold text-brand-navy mb-1";
   const errCls = "text-red-500 text-xs mt-1";
-  const total = product.price * quantity;
+  const total  = product.price * quantity;
 
   return (
     <div className="mt-6 pt-6 border-t border-gray-100 space-y-4">
@@ -254,7 +247,7 @@ export default function InlineOrderForm({
         <span className="font-black text-brand-navy text-lg">{formatPrice(total)}</span>
       </div>
 
-      {/* Full name */}
+      {/* الاسم الكامل */}
       <div>
         <label className={lbl}>الاسم الكامل *</label>
         <input
@@ -267,7 +260,7 @@ export default function InlineOrderForm({
         {fieldErrors.full_name && <p className={errCls}>{fieldErrors.full_name}</p>}
       </div>
 
-      {/* Phone */}
+      {/* رقم الهاتف */}
       <div>
         <label className={lbl}>رقم الهاتف *</label>
         <input
@@ -281,51 +274,27 @@ export default function InlineOrderForm({
         {fieldErrors.phone && <p className={errCls}>{fieldErrors.phone}</p>}
       </div>
 
-      {/* City */}
-      <div>
-        <label className={lbl}>المدينة *</label>
-        <input
-          type="text"
-          className={inp}
-          placeholder="مثال: الدار البيضاء"
-          value={form.city}
-          onChange={(e) => { set("city", e.target.value); clearErr("city"); }}
-        />
-        {fieldErrors.city && <p className={errCls}>{fieldErrors.city}</p>}
-      </div>
-
-      {/* Address */}
+      {/* العنوان الكامل */}
       <div>
         <label className={lbl}>العنوان الكامل *</label>
         <textarea
           className={inp + " resize-none"}
           rows={2}
-          placeholder="الحي، الشارع، رقم الدار..."
+          placeholder="المدينة، الحي، الشارع، رقم الدار..."
           value={form.address}
           onChange={(e) => { set("address", e.target.value); clearErr("address"); }}
         />
         {fieldErrors.address && <p className={errCls}>{fieldErrors.address}</p>}
       </div>
 
-      {/* Note */}
-      <div>
-        <label className={lbl}>ملاحظة (اختياري)</label>
-        <input
-          type="text"
-          className={inp}
-          placeholder="أي تفصيل إضافي..."
-          value={form.note}
-          onChange={(e) => set("note", e.target.value)}
-        />
-      </div>
-
       {/* Submit buttons */}
       <div className="flex flex-col gap-3 pt-1">
+        {/* ── اشترِ الآن — green animated purchase button ── */}
         <button
           type="button"
           onClick={submitCod}
           disabled={submitting}
-          className="btn-purchase-animate w-full bg-brand-gold text-white font-bold py-4 flex items-center justify-center gap-2 hover:scale-[1.02] hover:brightness-110 active:scale-95 transition-all text-base disabled:opacity-60 disabled:[animation:none] rounded-sm"
+          className="btn-purchase-animate w-full bg-[#16A34A] text-white font-bold py-4 flex items-center justify-center gap-2 hover:bg-[#15803d] hover:scale-[1.02] active:scale-95 transition-all text-base disabled:opacity-60 disabled:[animation:none] rounded-sm"
         >
           {submitting ? (
             <Loader2 className="h-5 w-5 animate-spin" />
@@ -335,6 +304,7 @@ export default function InlineOrderForm({
           اشترِ الآن
         </button>
 
+        {/* ── اطلب عبر واتساب ── */}
         <button
           type="button"
           onClick={submitWhatsApp}

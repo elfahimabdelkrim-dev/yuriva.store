@@ -1,7 +1,6 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
-import { Truck, RefreshCw, CreditCard } from "lucide-react";
 import type { Product, ProductColor } from "@/types";
 import { formatPrice, formatDiscount, sanitizeProductTitle } from "@/lib/utils";
 import Badge from "@/components/ui/Badge";
@@ -9,7 +8,7 @@ import StarRating from "@/components/ui/StarRating";
 import PackColorSelector from "./PackColorSelector";
 import InlineOrderForm from "./InlineOrderForm";
 
-// WhatsApp icon — used in trust badges row
+// WhatsApp icon (kept for potential future use)
 function WhatsAppIcon({ className = "h-4 w-4" }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden="true">
@@ -179,21 +178,6 @@ export default function ProductInfo({ product }: ProductInfoProps) {
             +
           </button>
         </div>
-      </div>
-
-      {/* Trust mini badges */}
-      <div className="grid grid-cols-2 gap-3 pt-2 border-t border-gray-100">
-        {[
-          { icon: <Truck className="h-4 w-4" />, text: "توصيل مجاني" },
-          { icon: <CreditCard className="h-4 w-4" />, text: "الدفع عند الاستلام" },
-          { icon: <WhatsAppIcon />, text: "تأكيد عبر واتساب" },
-          { icon: <RefreshCw className="h-4 w-4" />, text: "تبديل سهل" },
-        ].map((item) => (
-          <div key={item.text} className="flex items-center gap-2 text-xs text-brand-gray">
-            <span className="text-brand-gold">{item.icon}</span>
-            {item.text}
-          </div>
-        ))}
       </div>
 
       {/* ── Inline order form — replaces modal ── */}
