@@ -279,6 +279,13 @@ export default function InlineOrderForm({ product }: Props) {
       {/* Form fields */}
       <div className="bg-white rounded-b-[1.35rem] px-5 py-5 space-y-4">
 
+        {/* Price block */}
+        <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-center">
+          <span className="text-base font-black text-gray-900">
+            الثمن: {formatPrice(total)}
+          </span>
+        </div>
+
         {/* المقاس */}
         {safeSizes.length > 0 && (
           <div>
@@ -395,12 +402,6 @@ export default function InlineOrderForm({ product }: Props) {
             onChange={(e) => { set("address", e.target.value); clearErr("address"); }}
           />
           {fieldErrors.address && <p className={errCls}>{fieldErrors.address}</p>}
-        </div>
-
-        {/* المجموع الكلي */}
-        <div className="bg-gray-50 border border-gray-200 p-3 flex items-center justify-between rounded-xl">
-          <span className="text-sm text-gray-500">المجموع الكلي</span>
-          <span className="font-black text-gray-900 text-lg">{formatPrice(total)}</span>
         </div>
 
         {/* Buttons */}
