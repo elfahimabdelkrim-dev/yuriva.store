@@ -271,27 +271,9 @@ export default function InlineOrderForm({ product }: Props) {
     <div className="mt-6 bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
 
       {/* Card header */}
-      <div className="px-5 pt-5 pb-4 border-b border-gray-100 bg-gradient-to-l from-slate-50 to-white">
+      <div className="px-5 pt-5 pb-4 border-b border-gray-100 text-center">
         <h3 className="font-black text-brand-navy text-xl leading-snug">كمّل طلبك فـ 30 ثانية</h3>
         <p className="text-xs text-brand-gray mt-1">الدفع عند الاستلام والتأكيد عبر الهاتف</p>
-      </div>
-
-      {/* Trust strip */}
-      <div className="flex items-center justify-around bg-gray-50 border-b border-gray-100 py-3 px-3">
-        <div className="flex flex-col items-center gap-0.5">
-          <span className="text-lg leading-none">💳</span>
-          <span className="text-[10px] font-semibold text-brand-navy text-center leading-tight">الدفع عند<br />الاستلام</span>
-        </div>
-        <div className="w-px h-8 bg-gray-200" />
-        <div className="flex flex-col items-center gap-0.5">
-          <span className="text-lg leading-none">🚚</span>
-          <span className="text-[10px] font-semibold text-brand-navy text-center leading-tight">توصيل<br />مجاني</span>
-        </div>
-        <div className="w-px h-8 bg-gray-200" />
-        <div className="flex flex-col items-center gap-0.5">
-          <span className="text-lg leading-none">📞</span>
-          <span className="text-[10px] font-semibold text-brand-navy text-center leading-tight">تأكيد<br />عبر الهاتف</span>
-        </div>
       </div>
 
       {/* Form fields */}
