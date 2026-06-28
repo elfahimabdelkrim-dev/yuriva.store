@@ -180,14 +180,24 @@ body {
   }
 }
 
-/* ── Checkout title subtle glow ── */
-@keyframes checkout-title-glow {
-  0%, 100% { text-shadow: 0 0 0px transparent; }
-  50%       { text-shadow: 0 0 14px rgba(255, 255, 255, 0.25), 0 0 4px rgba(255, 255, 255, 0.12); }
+/* ── Checkout title subtle shimmer (light background) ── */
+@keyframes checkout-title-shimmer {
+  0%   { background-position: 200% center; }
+  100% { background-position: -200% center; }
 }
 .animate-checkout-title-glow {
-  animation: checkout-title-glow 3s ease-in-out infinite;
+  background: linear-gradient(90deg, #0f172a 0%, #0f172a 30%, #c9a84c 50%, #0f172a 70%, #0f172a 100%);
+  background-size: 250% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: checkout-title-shimmer 4s linear infinite;
 }
 @media (prefers-reduced-motion: reduce) {
-  .animate-checkout-title-glow { animation: none; }
+  .animate-checkout-title-glow {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: #0f172a;
+    color: #0f172a;
+  }
 }
