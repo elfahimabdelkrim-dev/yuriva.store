@@ -38,7 +38,7 @@ function quoteSheet(title: string): string {
 
 const HEADERS = [
   "رقم الطلب", "التاريخ", "الاسم الكامل", "الهاتف", "المدينة",
-  "العنوان", "المنتج", "المقاس", "الكمية", "المجموع",
+  "العنوان", "المنتج", "المقاس", "الألوان", "الكمية", "المجموع",
   "الحالة", "ملاحظة", "المصدر",
 ];
 
@@ -368,6 +368,22 @@ export async function syncOrderToSheet(order: Order, config?: SyncConfig): Promi
     const totalQty = order.items?.reduce((s, i) => s + (Number(i.quantity) || 0), 0) || 1;
     const fullName = `${order.customer_first_name ?? ""} ${order.customer_last_name ?? ""}`.trim();
 
+    // Parse colors from the first item's JSON string
+    const colorsStr = (() => {
+      try {
+        const raw = order.items?.[0]?.colors;
+        if (!raw || raw === "[]") return "";
+        const parsed = JSON.parse(raw) as Array<{ pieceIndex?: number; color?: { label?: string }; label?: string }>;
+        return parsed
+          .map((c, i) => {
+            const label = c.color?.label ?? c.label ?? "";
+            return parsed.length > 1 ? `${i + 1}: ${label}` : label;
+          })
+          .filter(Boolean)
+          .join("، ");
+      } catch { return ""; }
+    })();
+
     const row = [
       order.id ?? "",
       new Date(order.created_at || Date.now()).toLocaleString("ar-MA"),
@@ -377,6 +393,7 @@ export async function syncOrderToSheet(order: Order, config?: SyncConfig): Promi
       order.address ?? "",
       itemsTitle,
       sizes,
+      colorsStr,
       String(totalQty),
       String(order.total_amount ?? 0),
       order.status ?? "new",
@@ -387,7 +404,7 @@ export async function syncOrderToSheet(order: Order, config?: SyncConfig): Promi
     stage = "append_row";
     await sheets.spreadsheets.values.append({
       spreadsheetId: sheetId,
-      range: `${quoteSheet(sheetTitle)}!A:M`,
+      range: `${quoteSheet(sheetTitle)}!A:N`,
       valueInputOption: "USER_ENTERED",
       insertDataOption: "INSERT_ROWS",
       requestBody: { values: [row] },
@@ -424,7 +441,7 @@ export async function updateOrderStatusInSheet(
     const rowIndex = rows.findIndex((r) => r[0] === orderId);
     if (rowIndex === -1) return false;
 
-    // Status is column K (11th column) in the new 13-column schema
+    // Status is column K (11th column) in the 14-column schema
     await sheets.spreadsheets.values.update({
       spreadsheetId: sheetId,
       range: `${quoteSheet(sheetTitle)}!K${rowIndex + 1}`,

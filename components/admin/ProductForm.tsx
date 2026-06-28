@@ -36,6 +36,7 @@ export default function ProductForm({ product }: ProductFormProps) {
     allow_piece_colors: product?.allow_piece_colors ?? true,
     one_size_for_pack: product?.one_size_for_pack ?? true,
     pack_per_piece_size: false,
+    required_color_count: product?.required_color_count?.toString() || "1",
     // Flags
     is_featured: product?.is_featured || false,
     is_best_seller: product?.is_best_seller || false,
@@ -173,6 +174,7 @@ export default function ProductForm({ product }: ProductFormProps) {
         pack_pieces: form.is_pack ? parseInt(form.pack_pieces) : null,
         allow_piece_colors: form.allow_piece_colors,
         one_size_for_pack: form.one_size_for_pack,
+        required_color_count: parseInt(form.required_color_count) || 1,
         is_featured: form.is_featured,
         is_best_seller: form.is_best_seller,
         is_new_arrival: form.is_new_arrival,
@@ -355,8 +357,13 @@ export default function ProductForm({ product }: ProductFormProps) {
                 </select>
               </div>
               <div>
-                <label className={lbl}>وصف الباك (اختياري)</label>
-                <input value={form.pack_label} onChange={e => set("pack_label", e.target.value)} className={inp} placeholder="باك خاص للصيف" />
+                <label className={lbl}>عدد الألوان اللي خاص الزبون يختار</label>
+                <select value={form.required_color_count} onChange={e => set("required_color_count", e.target.value)} className={inp}>
+                  <option value="1">1 لون</option>
+                  <option value="2">2 ألوان</option>
+                  <option value="3">3 ألوان</option>
+                  <option value="4">4 ألوان</option>
+                </select>
               </div>
             </div>
             <div className="space-y-2">

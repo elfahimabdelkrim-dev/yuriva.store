@@ -6,7 +6,6 @@ import type { Product, ProductColor } from "@/types";
 import { validateMoroccanPhone, formatPrice } from "@/lib/utils";
 import { siteConfig } from "@/config/site";
 import { fbqInitiateCheckout, fbqPurchase, fbqContact, getCookie } from "@/lib/meta-pixel";
-import PackColorSelector from "./PackColorSelector";
 import toast from "react-hot-toast";
 
 function WhatsAppIcon({ className = "h-5 w-5" }: { className?: string }) {
@@ -28,53 +27,46 @@ interface FormState {
 }
 
 function buildDirectWhatsAppMessage(opts: {
-  product:       Product;
-  selectedSize:  string;
-  selectedColor: ProductColor | null;
-  packColors:    (ProductColor | null)[];
-  quantity:      number;
-  total:         number;
-  name?:         string;
-  phone?:        string;
-  address?:      string;
+  product:        Product;
+  selectedSize:   string;
+  selectedColors: ProductColor[];
+  quantity:       number;
+  total:          number;
+  name?:          string;
+  phone?:         string;
+  address?:       string;
 }): string {
-  const { product, selectedSize, selectedColor, packColors, quantity, total,
+  const { product, selectedSize, selectedColors, quantity, total,
           name, phone, address } = opts;
 
   const productUrl = typeof window !== "undefined"
     ? `${window.location.origin}/products/${product.slug}`
     : `https://yuriva.store/products/${product.slug}`;
 
-  let colorLine = "";
-  if (product.is_pack && packColors.some(Boolean)) {
-    colorLine = packColors
-      .filter(Boolean)
-      .map((c, i) => `قطعة ${i + 1}: ${c?.label ?? ""}`)
-      .join("، ");
-  } else if (selectedColor) {
-    colorLine = selectedColor.label;
-  }
+  const colorLine = selectedColors.length > 1
+    ? selectedColors.map((c, i) => `${i + 1}: ${c.label}`).join("، ")
+    : selectedColors[0]?.label ?? "";
 
-  const lines: string[] = [
-    "السلام عليكم، بغيت نطلب من YURIVA 🛙️",
+  const lines_msg: string[] = [
+    "السلام عليكم، بغيت نطلب من YURIVA",
     "",
     `*المنتج:* ${product.title}`,
     `*الثمن:* ${total} درهم`,
   ];
-  if (selectedSize) lines.push(`*المقاس:* ${selectedSize}`);
-  if (colorLine)    lines.push(`*اللون:* ${colorLine}`);
-  if (quantity > 1) lines.push(`*الكمية:* ${quantity}`);
-  lines.push(`*الرابط:* ${productUrl}`);
+  if (selectedSize) lines_msg.push(`*المقاس:* ${selectedSize}`);
+  if (colorLine)    lines_msg.push(`*اللون:* ${colorLine}`);
+  if (quantity > 1) lines_msg.push(`*الكمية:* ${quantity}`);
+  lines_msg.push(`*الرابط:* ${productUrl}`);
 
   if (name || phone || address) {
-    lines.push("", "---");
-    if (name)    lines.push(`*الاسم:* ${name}`);
-    if (phone)   lines.push(`*الهاتف:* ${phone}`);
-    if (address) lines.push(`*العنوان:* ${address}`);
+    lines_msg.push("", "---");
+    if (name)    lines_msg.push(`*الاسم:* ${name}`);
+    if (phone)   lines_msg.push(`*الهاتف:* ${phone}`);
+    if (address) lines_msg.push(`*العنوان:* ${address}`);
   }
 
-  lines.push("", "من فضلكم بغيت نأكد الطلب 🙏");
-  return lines.join("\n");
+  lines_msg.push("", "من فضلكم بغيت نأكد الطلب");
+  return lines_msg.join("\n");
 }
 
 function openWhatsApp(phoneNumber: string, message: string): void {
@@ -97,16 +89,15 @@ export default function InlineOrderForm({ product }: Props) {
   const [sizeError,    setSizeError]    = useState("");
   const quantity = 1;
 
+  // Color state -- unified multi-select driven by required_color_count
   const safeColors = Array.isArray(product.colors) ? product.colors : [];
-  const safePieces = Math.max(1, Math.min(Number(product.pack_pieces) || 1, 20));
-  const [selectedColor, setSelectedColor] = useState<ProductColor | null>(null);
-  const [packColors, setPackColors] = useState<(ProductColor | null)[]>(
-    Array(safePieces).fill(null)
-  );
-  const [colorError, setColorError] = useState("");
+  const reqCount   = Math.max(1, Math.min(Number(product.required_color_count) || 1, 4));
+  const hasColors  = safeColors.length > 0;
+  const [selectedColors, setSelectedColors] = useState<ProductColor[]>([]);
+  const [colorError,     setColorError]     = useState("");
 
-  const [form,        setForm]        = useState<FormState>({ full_name: "", phone: "", address: "" });
-  const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FormState, string>>>({});
+  const [form,          setForm]          = useState<FormState>({ full_name: "", phone: "", address: "" });
+  const [fieldErrors,   setFieldErrors]   = useState<Partial<Record<keyof FormState, string>>>({});
   const [submittingCod, setSubmittingCod] = useState(false);
 
   const set = (field: keyof FormState, value: string) =>
@@ -115,12 +106,37 @@ export default function InlineOrderForm({ product }: Props) {
   const clearErr = (field: keyof FormState) =>
     setFieldErrors((e) => ({ ...e, [field]: undefined }));
 
-  const safeSizes       = Array.isArray(product.sizes) ? product.sizes : [];
-  const total           = product.price * quantity;
-  const hasColors       = safeColors.length > 0;
-  const isPack          = !!product.is_pack && !!product.allow_piece_colors;
-  const chosenPackCount = packColors.filter(Boolean).length;
+  const safeSizes = Array.isArray(product.sizes) ? product.sizes : [];
+  const total     = product.price * quantity;
 
+  // Toggle a color on/off (up to reqCount)
+  const toggleColor = (color: ProductColor) => {
+    setColorError("");
+    const alreadySelected = selectedColors.some((c) => c.name === color.name);
+    if (alreadySelected) {
+      setSelectedColors((prev) => prev.filter((c) => c.name !== color.name));
+    } else {
+      if (selectedColors.length >= reqCount) {
+        setColorError(
+          reqCount === 1
+            ? "اختار لون واحد فقط"
+            : `تقدر تختار غير ${reqCount} ألوان`
+        );
+        return;
+      }
+      setSelectedColors((prev) => [...prev, color]);
+    }
+  };
+
+  const buildColorsJson = (): string =>
+    JSON.stringify(selectedColors.map((c, i) => ({ pieceIndex: i, color: c })));
+
+  const buildColorsParam = (): string =>
+    selectedColors.length > 1
+      ? selectedColors.map((c, i) => `${i + 1}: ${c.label}`).join("، ")
+      : selectedColors[0]?.label ?? "";
+
+  // Validation -- only for Buy Now button
   const validate = (): boolean => {
     const errs: Partial<Record<keyof FormState, string>> = {};
     if (!form.full_name.trim()) errs.full_name = "الاسم ديالك مطلوب";
@@ -134,42 +150,22 @@ export default function InlineOrderForm({ product }: Props) {
     } else { setSizeError(""); }
 
     let colorOk = true;
-    if (hasColors) {
-      if (isPack) {
-        if (chosenPackCount < safePieces) {
-          setColorError(`خاصك تختار لون لكل قطعة (${chosenPackCount} من ${safePieces})`);
-          colorOk = false;
-        } else { setColorError(""); }
-      } else {
-        if (!selectedColor) {
-          setColorError("خاصك تختار اللون");
-          colorOk = false;
-        } else { setColorError(""); }
-      }
+    if (hasColors && selectedColors.length < reqCount) {
+      setColorError(
+        reqCount === 1
+          ? "اختار اللون"
+          : `خاصك تختار ${reqCount} ألوان`
+      );
+      colorOk = false;
+    } else {
+      setColorError("");
     }
 
     setFieldErrors(errs);
     return Object.keys(errs).length === 0 && sizeOk && colorOk;
   };
 
-  const buildColorsJson = (): string => {
-    if (isPack && packColors.length > 0)
-      return JSON.stringify(packColors.filter(Boolean).map((c, i) => ({ pieceIndex: i, color: c })));
-    if (selectedColor) return JSON.stringify([selectedColor]);
-    return "[]";
-  };
-
-  const buildColorsParam = (): string => {
-    if (isPack && packColors.some(Boolean)) {
-      return packColors
-        .filter(Boolean)
-        .map((c, i) => `قطعة ${i + 1}: ${c?.label ?? ""}`)
-        .join("، ");
-    }
-    if (selectedColor) return selectedColor.label;
-    return "";
-  };
-
+  // Buy Now -- validates + creates order
   const submitCod = async () => {
     if (!validate()) return;
     setSubmittingCod(true);
@@ -250,11 +246,12 @@ export default function InlineOrderForm({ product }: Props) {
     }
   };
 
+  // WhatsApp -- direct, no validation required
   const submitWhatsApp = () => {
     console.log("[WhatsApp Order] Direct WhatsApp clicked");
     const phoneNumber = siteConfig.whatsappNumber;
     const message = buildDirectWhatsAppMessage({
-      product, selectedSize, selectedColor, packColors, quantity, total,
+      product, selectedSize, selectedColors, quantity, total,
       name:    form.full_name.trim()  || undefined,
       phone:   form.phone.trim()      || undefined,
       address: form.address.trim()    || undefined,
@@ -286,7 +283,7 @@ export default function InlineOrderForm({ product }: Props) {
           </span>
         </div>
 
-        {/* المقاس */}
+        {/* Size selector */}
         {safeSizes.length > 0 && (
           <div>
             <label className={lbl}>المقاس</label>
@@ -310,61 +307,55 @@ export default function InlineOrderForm({ product }: Props) {
           </div>
         )}
 
-        {/* اللون — non-pack */}
-        {!isPack && hasColors && (
+        {/* Color selector -- unified for single and multi */}
+        {hasColors && (
           <div>
-            <p className="font-semibold text-gray-700 text-sm mb-2">
-              اللون{selectedColor ? `: ${selectedColor.label}` : ""}
-            </p>
+            <div className="flex items-center justify-between mb-2">
+              <label className={lbl + " mb-0"}>
+                {reqCount === 1 ? "اللون" : "الألوان"}
+              </label>
+              {reqCount > 1 && (
+                <span className="text-xs text-gray-500">
+                  {selectedColors.length === 0
+                    ? `اختار ${reqCount} ألوان`
+                    : `اخترت ${selectedColors.length} من ${reqCount}`}
+                </span>
+              )}
+            </div>
             <div className="flex flex-wrap gap-2">
-              {safeColors.map((color) => (
-                <button
-                  key={color.name}
-                  type="button"
-                  onClick={() => { setSelectedColor(color); setColorError(""); }}
-                  title={color.label}
-                  className={`flex items-center gap-1.5 px-3 py-2 border text-sm font-medium transition-all rounded-lg ${
-                    selectedColor?.name === color.name
-                      ? "border-brand-navy bg-brand-navy text-white"
-                      : "border-gray-300 text-gray-700 hover:border-brand-navy"
-                  }`}
-                >
-                  <span
-                    className="w-4 h-4 rounded-full border border-white/50 shadow-sm"
-                    style={{ backgroundColor: color.hex }}
-                  />
-                  {color.label}
-                </button>
-              ))}
+              {safeColors.map((color) => {
+                const isSelected = selectedColors.some((c) => c.name === color.name);
+                return (
+                  <button
+                    key={color.name}
+                    type="button"
+                    onClick={() => toggleColor(color)}
+                    title={color.label}
+                    className={`flex items-center gap-1.5 px-3 py-2 border text-sm font-medium transition-all rounded-lg ${
+                      isSelected
+                        ? "border-brand-navy bg-brand-navy text-white"
+                        : "border-gray-300 text-gray-700 hover:border-brand-navy"
+                    }`}
+                  >
+                    <span
+                      className="w-4 h-4 rounded-full border border-white/50 shadow-sm flex-shrink-0"
+                      style={{ backgroundColor: color.hex }}
+                    />
+                    {color.label}
+                    {isSelected && reqCount > 1 && (
+                      <span className="text-[10px] font-bold opacity-75 mr-0.5">
+                        {selectedColors.findIndex((c) => c.name === color.name) + 1}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
             {colorError && <p className={errCls}>{colorError}</p>}
           </div>
         )}
 
-        {/* اللون — pack */}
-        {isPack && hasColors && (
-          <div>
-            <p className="font-semibold text-gray-700 text-sm mb-2">
-              {chosenPackCount > 0
-                ? `اخترت ${chosenPackCount} من ${safePieces} ألوان`
-                : "اختر لون كل قطعة"}
-            </p>
-            <PackColorSelector
-              pieces={safePieces}
-              colors={safeColors}
-              selected={packColors}
-              onChange={(i, c) => {
-                const updated = [...packColors];
-                updated[i] = c;
-                setPackColors(updated);
-                if (colorError) setColorError("");
-              }}
-              error={colorError || undefined}
-            />
-          </div>
-        )}
-
-        {/* الاسم ديالك */}
+        {/* Full name */}
         <div>
           <label className={lbl}>الاسم ديالك *</label>
           <input
@@ -377,7 +368,7 @@ export default function InlineOrderForm({ product }: Props) {
           {fieldErrors.full_name && <p className={errCls}>{fieldErrors.full_name}</p>}
         </div>
 
-        {/* رقم الهاتف */}
+        {/* Phone */}
         <div>
           <label className={lbl}>رقم الهاتف *</label>
           <input
@@ -391,7 +382,7 @@ export default function InlineOrderForm({ product }: Props) {
           {fieldErrors.phone && <p className={errCls}>{fieldErrors.phone}</p>}
         </div>
 
-        {/* المدينة والعنوان */}
+        {/* Address */}
         <div>
           <label className={lbl}>المدينة والعنوان *</label>
           <textarea
@@ -416,7 +407,7 @@ export default function InlineOrderForm({ product }: Props) {
             {submittingCod ? "كيتم التسجيل..." : "اشترِ الآن"}
           </button>
 
-          <p className="text-xs text-center text-gray-400">ما عرفتيش تعمر الطلب؟</p>
+          <p className="text-xs text-center text-gray-400">ما عرفديتيش تعمر الطلب؟</p>
 
           <button
             type="button"

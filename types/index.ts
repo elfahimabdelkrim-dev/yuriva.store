@@ -47,6 +47,7 @@ export interface Product {
   pack_pieces?: number;
   allow_piece_colors?: boolean;
   one_size_for_pack?: boolean;
+  required_color_count?: number;
   is_featured?: boolean;
   is_active: boolean;
   is_best_seller?: boolean;
