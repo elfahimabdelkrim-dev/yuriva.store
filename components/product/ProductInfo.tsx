@@ -36,17 +36,6 @@ export default function ProductInfo({ product }: ProductInfoProps) {
         )}
       </div>
 
-      {/* Price */}
-      <div className="flex items-center gap-3">
-        <span className="text-3xl font-black text-brand-navy">{formatPrice(product.price)}</span>
-        {product.old_price && (
-          <>
-            <span className="text-brand-gray line-through text-lg">{formatPrice(product.old_price)}</span>
-            <Badge>وفر {discount}%</Badge>
-          </>
-        )}
-      </div>
-
       {/* Pack info */}
       {product.is_pack && product.pack_pieces && (
         <div className="bg-brand-gold/10 border border-brand-gold/30 p-3 rounded-sm">
