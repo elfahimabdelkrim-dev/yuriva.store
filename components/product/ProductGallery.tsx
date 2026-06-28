@@ -21,7 +21,6 @@ export default function ProductGallery({ images, title }: ProductGalleryProps) {
     ? validImages
     : [{ url: "/images/placeholder-product.svg", alt: title }];
 
-  // Keep active in bounds if images change
   const safeActive = Math.min(active, allImages.length - 1);
 
   const go = (dir: "prev" | "next") => {
@@ -64,7 +63,7 @@ export default function ProductGallery({ images, title }: ProductGalleryProps) {
           </span>
         )}
 
-        {/* Arrows */}
+        {/* Prev/Next arrows */}
         {allImages.length > 1 && (
           <>
             <button
@@ -83,25 +82,37 @@ export default function ProductGallery({ images, title }: ProductGalleryProps) {
         )}
       </div>
 
-      {/* Thumbnails */}
+      {/* Thumbnails — horizontal scroll strip, mobile-first */}
       {allImages.length > 1 && (
-        <div className="flex gap-2 overflow-x-auto no-scrollbar">
+        <div
+          className="flex flex-row gap-2 overflow-x-auto no-scrollbar pb-1"
+          style={{ scrollSnapType: "x mandatory" }}
+        >
           {allImages.map((img, i) => (
             <button
               key={i}
               onClick={() => setActive(i)}
-              className={`relative flex-none w-16 h-20 border-2 transition-all overflow-hidden ${
-                i === safeActive ? "border-brand-gold" : "border-gray-200 hover:border-brand-gold/50"
-              }`}
+              style={{ scrollSnapAlign: "start" }}
+              className={[
+                "relative flex-none w-[72px] h-[88px] rounded-lg border-2 transition-all overflow-hidden",
+                i === safeActive
+                  ? "border-brand-navy shadow-md"
+                  : "border-gray-200 hover:border-brand-navy/50",
+              ].join(" ")}
             >
               <Image
-                src={imgErrors[i] ? "/images/placeholder-product.svg" : (img.url || "/images/placeholder-product.svg")}
-                alt={img.alt || `${title} ${i + 1}`}
+                src={imgErrors[i]
+                  ? "/images/placeholder-product.svg"
+                  : (img.url || "/images/placeholder-product.svg")}
+                alt={img.alt || title + " " + (i + 1)}
                 fill
                 className="object-cover"
                 onError={() => setImgErrors((e) => ({ ...e, [i]: true }))}
                 unoptimized
               />
+              {i === safeActive && (
+                <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-4 h-1 bg-brand-navy rounded-full" />
+              )}
             </button>
           ))}
         </div>

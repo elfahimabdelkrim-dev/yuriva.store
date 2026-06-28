@@ -50,8 +50,15 @@ export default function ProductForm({ product }: ProductFormProps) {
     // Sizes & Colors (arrays)
     sizes: product?.sizes || (["M", "L", "XL", "XXL"] as string[]),
     colors: product?.colors || ([] as ProductColor[]),
-    // Extra images
-    extra_images: ([] as string[]),
+    // Extra images — load existing gallery images from product (exclude main_image)
+    extra_images: (
+      Array.isArray(product?.images)
+        ? (product.images as import("@/types").ProductImage[])
+            .filter(img => img.image_type !== "main" && img.url && img.url !== product?.main_image)
+            .map(img => img.url)
+            .filter(Boolean) as string[]
+        : [] as string[]
+    ),
     new_image_url: "",
     // New size / new color inputs
     new_size: "",
@@ -303,7 +310,12 @@ export default function ProductForm({ product }: ProductFormProps) {
 
       {/* ── Images ─────────────────── */}
       <div className={sec}>
-        <h2 className="font-black text-brand-navy mb-1">الصور</h2>
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="font-black text-brand-navy">صور المنتج</h2>
+          <span className="text-xs text-brand-gray">{1 + form.extra_images.length}/8 صور</span>
+        </div>
+        <p className="text-xs text-brand-gray mb-3">يمكنك إضافة حتى 8 صور — الصورة الرئيسية + 7 صور إضافية</p>
+
         <ImageUploadField
           label="الصورة الرئيسية *"
           value={form.main_image}
@@ -312,28 +324,60 @@ export default function ProductForm({ product }: ProductFormProps) {
           subfolder={form.slug || "general"}
           required
         />
-        <div>
-          <p className={lbl}>صور إضافية (غاليري)</p>
+
+        <div className="mt-4">
+          <div className="flex items-center justify-between mb-2">
+            <p className={lbl}>صور إضافية</p>
+            <span className="text-xs text-brand-gray">{form.extra_images.length}/7</span>
+          </div>
+
           {form.extra_images.length > 0 && (
-            <div className="flex gap-2 flex-wrap mb-3">
+            <div className="grid grid-cols-4 gap-2 mb-3">
               {form.extra_images.map((url, i) => (
-                <div key={i} className="relative">
+                <div key={url + i} className="relative group">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={url} alt="" className="h-20 w-20 object-cover border border-gray-200" onError={e => ((e.currentTarget as HTMLImageElement).style.display = "none")} />
-                  <button type="button" onClick={() => removeImage(i)} className="absolute -top-1 -right-1 bg-red-500 text-white text-xs w-4 h-4 flex items-center justify-center rounded-full">×</button>
+                  <img
+                    src={url}
+                    alt=""
+                    className="h-24 w-full object-cover border border-gray-200 rounded-lg"
+                    onError={e => { (e.currentTarget as HTMLImageElement).src = "/images/placeholder-product.svg"; }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeImage(i)}
+                    className="absolute top-1 right-1 bg-red-500 text-white text-xs w-5 h-5 flex items-center justify-center rounded-full shadow opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="حذف الصورة"
+                  >×</button>
+                  <span className="absolute bottom-1 left-1 bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded">
+                    {i + 2}
+                  </span>
                 </div>
               ))}
             </div>
           )}
-          <ImageUploadField
-            label=""
-            value={form.new_image_url}
-            onChange={url => { if (url) { set("extra_images", [...form.extra_images, url]); set("new_image_url", ""); } }}
-            folder="products"
-            subfolder={form.slug || "general"}
-            compact
-          />
-          <p className="text-xs text-brand-gray mt-1">ارفع صورة — تتزاد للغاليري مباشرة</p>
+
+          {form.extra_images.length < 7 ? (
+            <>
+              <ImageUploadField
+                label=""
+                value={form.new_image_url}
+                onChange={url => {
+                  if (url && form.extra_images.length < 7) {
+                    set("extra_images", [...form.extra_images, url]);
+                    set("new_image_url", "");
+                  }
+                }}
+                folder="products"
+                subfolder={form.slug || "general"}
+                compact
+              />
+              <p className="text-xs text-brand-gray mt-1">ارفع صورة — تتزاد للغاليري مباشرة</p>
+            </>
+          ) : (
+            <p className="text-xs text-amber-600 font-semibold bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              وصلت للحد الأقصى — 7 صور إضافية (8 إجمالاً)
+            </p>
+          )}
         </div>
       </div>
 
@@ -469,7 +513,7 @@ export default function ProductForm({ product }: ProductFormProps) {
         </div>
       </div>
 
-      {/* ── SEO ─────────────────── */}
+      {/* ── SEO ───────────────────────────── */}
       <div className={sec}>
         <h2 className="font-black text-brand-navy">SEO</h2>
         <div><label className={lbl}>عنوان SEO</label><input value={form.seo_title} onChange={e => set("seo_title", e.target.value)} className={inp} /></div>

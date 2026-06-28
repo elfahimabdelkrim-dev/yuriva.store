@@ -54,10 +54,11 @@ export async function POST(req: NextRequest) {
 
     if (error) return NextResponse.json({ success: false, error: error.message }, { status: 500 });
 
-    // Save extra_images to product_images table
+    // Save extra_images to product_images table (max 7 extras)
     if (Array.isArray(extra_images) && extra_images.length > 0 && data?.id) {
       const imageRows = extra_images
         .filter((url: string) => typeof url === "string" && url.trim().length > 0)
+        .slice(0, 7)
         .map((url: string, i: number) => ({
           product_id: data.id,
           url,
