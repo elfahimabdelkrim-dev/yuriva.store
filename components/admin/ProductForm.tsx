@@ -458,41 +458,112 @@ export default function ProductForm({ product }: ProductFormProps) {
 
       {/* ── Colors ─────────────────── */}
       <div className={sec}>
-        <h2 className="font-black text-brand-navy">الألوان المتاحة</h2>
+        <h2 className="font-black text-brand-navy mb-1">الألوان المتاحة</h2>
+
+        {/* Selected colors */}
         {form.colors.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-3">
+          <div className="flex flex-wrap gap-2 mb-4">
             {form.colors.map((c, i) => (
-              <div key={i} className="flex items-center gap-1.5 border border-gray-200 px-2 py-1.5">
-                <span className="w-5 h-5 rounded-full border border-gray-200 flex-shrink-0" style={{ backgroundColor: c.hex }} />
-                <span className="text-xs font-medium">{c.label}</span>
-                <span className="text-xs text-brand-gray" dir="ltr">({c.name})</span>
-                <button type="button" onClick={() => removeColor(i)} className="text-red-400 hover:text-red-600 text-xs font-bold">×</button>
+              <div key={i} className="flex items-center gap-1.5 border border-gray-200 rounded-full px-3 py-1.5 bg-white shadow-sm">
+                <span className="w-4 h-4 rounded-full border border-gray-200 flex-shrink-0" style={{ backgroundColor: c.hex }} />
+                <span className="text-xs font-semibold">{c.label}</span>
+                <button type="button" onClick={() => removeColor(i)} className="text-red-400 hover:text-red-600 text-xs font-bold ml-1">×</button>
               </div>
             ))}
           </div>
         )}
-        <div className="flex gap-2 items-end flex-wrap">
-          <div>
-            <label className="text-xs font-bold text-brand-gray mb-1 block">اسم اللون (بالإنجليزية)</label>
-            <input value={form.new_color_name} onChange={e => set("new_color_name", e.target.value)} className="border border-gray-300 px-2 py-1.5 text-sm w-28 outline-none" placeholder="noir" dir="ltr" />
+
+        {/* ── Predefined palette ── */}
+        <p className="text-xs font-bold text-brand-gray mb-2">الألوان الجاهزة</p>
+        <p className="text-xs text-brand-gray mb-3">اختار من الألوان الجاهزة أو زيد لون جديد يدوياً</p>
+        {(() => {
+          const PALETTE: Array<[string, string, string]> = [
+            ["black",      "كحل",           "#000000"],
+            ["white",      "أبيض",           "#FFFFFF"],
+            ["gray",       "رمادي",          "#808080"],
+            ["light-gray", "رمادي فاتح",     "#D1D5DB"],
+            ["dark-gray",  "رمادي غامق",     "#4B5563"],
+            ["beige",      "بيج",            "#D8C3A5"],
+            ["cream",      "كريمي",          "#F5E6C8"],
+            ["camel",      "كاميل",          "#C19A6B"],
+            ["brown",      "بني",            "#8B4513"],
+            ["coffee",     "قهوة",           "#6F4E37"],
+            ["navy",       "أزرق غامق",      "#0B1F3A"],
+            ["blue",       "أزرق",           "#1D4ED8"],
+            ["sky-blue",   "أزرق سماوي",     "#87CEEB"],
+            ["turquoise",  "تركواز",         "#40E0D0"],
+            ["green",      "أخضر",           "#15803D"],
+            ["olive",      "زيتي",           "#6B8E23"],
+            ["khaki",      "خاكي",           "#6B6B3F"],
+            ["mint",       "نعناعي",         "#98FF98"],
+            ["red",        "أحمر",           "#DC2626"],
+            ["burgundy",   "خمري",           "#800020"],
+            ["maroon",     "بني محمر",       "#7B3F00"],
+            ["orange",     "برتقالي",        "#F97316"],
+            ["yellow",     "أصفر",           "#FACC15"],
+            ["mustard",    "موطارد",         "#D4A017"],
+            ["gold",       "ذهبي",           "#D4AF37"],
+            ["pink",       "وردي",           "#FF69B4"],
+            ["light-pink", "وردي فاتح",     "#FBCFE8"],
+            ["fuchsia",    "فوشيا",          "#D946EF"],
+            ["purple",     "بنفسجي",         "#7E22CE"],
+            ["mauve",      "موف",            "#B784A7"],
+            ["lavender",   "لافندر",         "#C4B5FD"],
+            ["lilac",      "ليلا",           "#C8A2C8"],
+          ];
+          return (
+            <div className="flex flex-wrap gap-1.5 mb-4">
+              {PALETTE.map(([name, label, hex]) => {
+                const already = form.colors.some(c => c.name === name);
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    disabled={already}
+                    onClick={() => {
+                      if (!already) {
+                        set("colors", [...form.colors, { name, label, hex }]);
+                      }
+                    }}
+                    title={already ? "مضاف" : "زيد " + label}
+                    className={[
+                      "flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-full border transition-all",
+                      already
+                        ? "border-brand-navy bg-brand-navy/10 text-brand-navy cursor-default opacity-60"
+                        : "border-gray-200 hover:border-brand-navy hover:bg-gray-50 text-gray-700 cursor-pointer",
+                    ].join(" ")}
+                  >
+                    <span
+                      className="w-3.5 h-3.5 rounded-full border border-gray-300 flex-shrink-0"
+                      style={{ backgroundColor: hex }}
+                    />
+                    {label}
+                    {already && <span className="text-[10px] opacity-70">✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })()}
+
+        {/* ── Manual add ── */}
+        <div className="border-t border-gray-100 pt-4">
+          <p className="text-xs font-bold text-brand-gray mb-2">زيد لون يدوياً</p>
+          <div className="flex gap-2 items-end flex-wrap">
+            <div>
+              <label className="text-xs font-bold text-brand-gray mb-1 block">الاسم (بالإنجليزية)</label>
+              <input value={form.new_color_name} onChange={e => set("new_color_name", e.target.value)} className="border border-gray-300 px-2 py-1.5 text-sm w-28 outline-none rounded" placeholder="rouge" dir="ltr" />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-brand-gray mb-1 block">التسمية بالدارجة</label>
+              <input value={form.new_color_label} onChange={e => set("new_color_label", e.target.value)} className="border border-gray-300 px-2 py-1.5 text-sm w-24 outline-none rounded" placeholder="كحل" />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-brand-gray mb-1 block">اللون</label>
+              <input type="color" value={form.new_color_hex} onChange={e => set("new_color_hex", e.target.value)} className="w-10 h-9 border border-gray-300 cursor-pointer rounded" />
+            </div>
+            <button type="button" onClick={addColor} className="bg-brand-navy text-white text-sm px-4 py-1.5 font-bold rounded hover:bg-opacity-85 transition-opacity">+ زيد</button>
           </div>
-          <div>
-            <label className="text-xs font-bold text-brand-gray mb-1 block">التسمية بالدارجة</label>
-            <input value={form.new_color_label} onChange={e => set("new_color_label", e.target.value)} className="border border-gray-300 px-2 py-1.5 text-sm w-24 outline-none" placeholder="كحل" />
-          </div>
-          <div>
-            <label className="text-xs font-bold text-brand-gray mb-1 block">اللون</label>
-            <input type="color" value={form.new_color_hex} onChange={e => set("new_color_hex", e.target.value)} className="w-10 h-9 border border-gray-300 cursor-pointer" />
-          </div>
-          <button type="button" onClick={addColor} className="bg-brand-navy text-white text-sm px-3 py-1.5 font-bold">+ زيد لون</button>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-1 mt-2">
-          {[["كحل","#000000","noir"],["رمادي","#808080","gris"],["بيج","#D2B48C","beige"],["خاكي","#6B6B3A","kaki"],["أزرق","#1E3A5F","bleu"],["بني","#8B4513","marron"]].map(([l,h,n]) => (
-            <button key={n} type="button" onClick={() => { set("new_color_name", n); set("new_color_label", l); set("new_color_hex", h); }}
-              className="flex items-center gap-1.5 text-xs border border-gray-100 hover:border-brand-gold px-2 py-1 text-brand-gray hover:text-brand-navy transition-colors">
-              <span className="w-3.5 h-3.5 rounded-full" style={{ backgroundColor: h }} />{l}
-            </button>
-          ))}
         </div>
       </div>
 
