@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
 import ProductForm from "@/components/admin/ProductForm";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 import { staticProducts } from "@/data/products";
 import { mapProduct } from "@/lib/products";
 import type { Product } from "@/types";

@@ -202,10 +202,11 @@ export default function ProductForm({ product }: ProductFormProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const d = await r.json() as { success: boolean; error?: string };
+      const d = await r.json() as { success: boolean; error?: string; imageError?: string };
 
       if (d.success) {
         toast.success(isEdit ? "\u062a\u062d\u0641\u0638 \u0627\u0644\u0645\u0646\u062a\u062c" : "\u062a\u0632\u0627\u062f \u0627\u0644\u0645\u0646\u062a\u062c");
+        if (d.imageError) toast.error("\u062e\u0637\u0623 \u0641\u064a \u062d\u0641\u0638 \u0627\u0644\u0635\u0648\u0631 \u0627\u0644\u0625\u0636\u0627\u0641\u064a\u0629 \u2014 \u062a\u0623\u0643\u062f \u0645\u0646 \u0648\u062c\u0648\u062f \u062c\u062f\u0648\u0644 product_images");
         router.push("/admin/products");
       } else {
         // Detect duplicate slug error from server (race condition or fallback)

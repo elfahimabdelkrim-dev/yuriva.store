@@ -82,13 +82,16 @@ export async function PUT(
     }
 
     // Replace gallery images: delete all existing, re-insert the full list
+    let imageError: string | undefined;
     if (Array.isArray(extra_images)) {
+      console.log("[PUT] replacing product_images for", params.id, "— new count:", extra_images.length);
+
       const { error: delErr } = await supabase
         .from("product_images")
         .delete()
         .eq("product_id", params.id);
       if (delErr)
-        console.error("[PUT] delete product_images:", delErr.message);
+        console.error("[PUT] delete product_images error:", delErr.message);
 
       const imageRows = extra_images
         .filter((url: string) => typeof url === "string" && url.trim().length > 0)
@@ -102,14 +105,21 @@ export async function PUT(
         }));
       if (imageRows.length > 0) {
         const { error: imgErr } = await supabase.from("product_images").insert(imageRows);
-        if (imgErr)
-          console.error("[PUT] product_images insert:", imgErr.message);
+        if (imgErr) {
+          console.error("[PUT] product_images insert error:", imgErr.message);
+          imageError = imgErr.message;
+        } else {
+          console.log("[PUT] inserted", imageRows.length, "product_images rows");
+        }
       }
     }
 
+    const slug = typeof productData.slug === "string" ? productData.slug : "";
     revalidatePath("/products", "page");
     revalidatePath("/", "layout");
-    return NextResponse.json({ success: true });
+    if (slug) revalidatePath(`/products/${slug}`, "page");
+    revalidatePath(`/admin/products/${params.id}`, "page");
+    return NextResponse.json({ success: true, imageError });
   } catch {
     return NextResponse.json({ success: false, error: "خطأ في الخادم" }, { status: 500 });
   }

@@ -55,6 +55,7 @@ export async function POST(req: NextRequest) {
     if (error) return NextResponse.json({ success: false, error: error.message }, { status: 500 });
 
     // Save extra_images to product_images table (max 7 extras)
+    let imageError: string | undefined;
     if (Array.isArray(extra_images) && extra_images.length > 0 && data?.id) {
       const imageRows = extra_images
         .filter((url: string) => typeof url === "string" && url.trim().length > 0)
@@ -66,14 +67,21 @@ export async function POST(req: NextRequest) {
           sort_order: i + 1,
           image_type: "gallery",
         }));
+      console.log("[POST /api/admin/products] saving", imageRows.length, "gallery images for product", data.id);
       if (imageRows.length > 0) {
-        await supabase.from("product_images").insert(imageRows);
+        const { error: imgErr } = await supabase.from("product_images").insert(imageRows);
+        if (imgErr) {
+          console.error("[POST /api/admin/products] product_images insert error:", imgErr.message);
+          imageError = imgErr.message;
+        }
       }
     }
 
+    const slug = typeof productData.slug === "string" ? productData.slug : "";
     revalidatePath("/products", "page");
     revalidatePath("/", "layout");
-    return NextResponse.json({ success: true, product: data });
+    if (slug) revalidatePath(`/products/${slug}`, "page");
+    return NextResponse.json({ success: true, product: data, imageError });
   } catch {
     return NextResponse.json({ success: false, error: "خطأ في الخادم" }, { status: 500 });
   }
