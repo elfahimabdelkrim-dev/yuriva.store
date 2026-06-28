@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Order, OrderItem } from "@/types";
 
-/** Race a promise against a timeout — returns fallback on timeout */
+export const dynamic = "force-dynamic";
+
+/** Race a promise against a timeout — resolves to fallback on timeout */
 function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([
     promise,
@@ -9,7 +11,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
   ]);
 }
 
-/** Get client IP from standard proxy headers */
+/** Extract client IP from Vercel/proxy headers */
 function getClientIp(req: NextRequest): string | undefined {
   return (
     req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
@@ -34,15 +36,15 @@ export async function POST(req: NextRequest) {
     const { order, items } = body;
     const metaTracking = body.meta ?? {};
 
+    // ── Supabase ───────────────────────────────────────────────────────────
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      const order_id = `ORD-${Date.now()}`;
-      return NextResponse.json({ success: true, order_id });
+      return NextResponse.json({ success: true, order_id: `ORD-${Date.now()}` });
     }
 
     const { createAdminClient } = await import("@/lib/supabase/server");
     const supabase = createAdminClient();
 
-    // Check duplicate (same phone within last 24h)
+    // Duplicate check (same phone within last 24h)
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { data: recent } = await supabase
       .from("orders")
@@ -50,16 +52,14 @@ export async function POST(req: NextRequest) {
       .eq("phone", order.phone)
       .gte("created_at", since)
       .limit(1);
-
     const is_duplicate = (recent?.length || 0) > 0;
 
-    // Check blacklist
+    // Blacklist check
     const { data: blacklisted } = await supabase
       .from("blacklist")
       .select("id")
       .eq("phone", order.phone)
       .limit(1);
-
     const is_blacklisted = (blacklisted?.length || 0) > 0;
 
     // Insert order
@@ -89,92 +89,101 @@ export async function POST(req: NextRequest) {
       changed_by: "system",
     });
 
-    // ── Google Sheets sync ─────────────────────────────────────────────────
-    try {
-      const { isConfigured, syncOrderToSheet } = await import("@/lib/google-sheets");
-      type SyncResult = { ok: boolean; error?: string; stage?: string };
-
-      if (isConfigured()) {
-        const orderWithItems = { ...newOrder, items } as Order;
-        const fallback: SyncResult = { ok: false, error: "timeout", stage: "timeout" };
-        const result = await withTimeout(syncOrderToSheet(orderWithItems), 8000, fallback);
-
-        await supabase
-          .from("orders")
-          .update({
-            google_sheet_synced: result.ok,
-            google_sheet_error: result.ok ? null : (result.error ?? "sync_failed_on_create").slice(0, 200),
-          })
-          .eq("id", newOrder.id);
-
-        if (!result.ok) {
-          console.error("[Google Sheets] Failed to sync order", newOrder.id, "stage=", result.stage, result.error);
-        } else {
-          console.log("[Google Sheets] Order", newOrder.id, "synced successfully");
-        }
-      } else {
-        console.log("[Google Sheets] Not configured — skipping sync for order", newOrder.id);
-      }
-    } catch (sheetErr) {
-      console.error("[Google Sheets] Exception during sync for order", newOrder.id, sheetErr);
-      supabase
-        .from("orders")
-        .update({
-          google_sheet_synced: false,
-          google_sheet_error: String(sheetErr).slice(0, 200),
-        })
-        .eq("id", newOrder.id)
-        .then(() => { /* ignore */ });
-    }
-
-    // ── Meta CAPI Purchase ─────────────────────────────────────────────────
-    // Runs server-side — access token never reaches the browser.
-    // A failure here NEVER blocks or changes the order response.
-    const pixelId = process.env.NEXT_PUBLIC_META_PIXEL_ID;
+    // ── Google Sheets sync + Meta CAPI — run in PARALLEL, both awaited ────
+    // Running in parallel caps total wait at max(8s, 6s) = 8s instead of 14s.
+    // Neither failure blocks the order response.
+    const pixelId    = process.env.NEXT_PUBLIC_META_PIXEL_ID;
     const accessToken = process.env.META_ACCESS_TOKEN;
+    const canSendCapi = !!(pixelId && accessToken && metaTracking.event_id);
 
-    if (pixelId && accessToken && metaTracking.event_id) {
-      const firstItem = items[0];
-      const numItems = items.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+    type SyncResult = { ok: boolean; error?: string; stage?: string };
 
-      // Fire and forget with timeout — don't await in the response path
-      void (async () => {
+    const [sheetResult, capiResult] = await Promise.allSettled([
+      // ── Google Sheets ──────────────────────────────────────────────────
+      (async (): Promise<SyncResult> => {
+        try {
+          const { isConfigured, syncOrderToSheet } = await import("@/lib/google-sheets");
+          if (!isConfigured()) {
+            console.log("[Google Sheets] Not configured — skipping sync for order", newOrder.id);
+            return { ok: true };
+          }
+          const orderWithItems = { ...newOrder, items } as Order;
+          const fallback: SyncResult = { ok: false, error: "timeout", stage: "timeout" };
+          return withTimeout(syncOrderToSheet(orderWithItems), 8000, fallback);
+        } catch (err) {
+          return { ok: false, error: String(err).slice(0, 200) };
+        }
+      })(),
+
+      // ── Meta CAPI Purchase ─────────────────────────────────────────────
+      // Runs server-side even when the mobile browser blocks window.fbq.
+      // Access token is NEVER logged or returned to the client.
+      (async (): Promise<{ ok: boolean; error?: string }> => {
+        if (!canSendCapi) return { ok: true }; // nothing to do
+
+        console.log("[Meta CAPI] Purchase send started for order", newOrder.id);
         try {
           const { sendCapiPurchase } = await import("@/lib/meta-capi");
+          const firstItem = items[0];
+          const numItems  = items.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+
           const result = await withTimeout(
             sendCapiPurchase({
-              pixelId,
-              accessToken,
+              pixelId:       pixelId!,
+              accessToken:   accessToken!,
               testEventCode: process.env.META_TEST_EVENT_CODE,
-              eventId: metaTracking.event_id!,
-              orderId: newOrder.id,
-              value: order.total_amount ?? 0,
-              productId: firstItem?.product_id ?? "",
-              productTitle: firstItem?.product_title ?? "",
+              eventId:       metaTracking.event_id!,
+              orderId:       newOrder.id,
+              value:         order.total_amount ?? 0,
+              productId:     firstItem?.product_id ?? "",
+              productTitle:  firstItem?.product_title ?? "",
               numItems,
-              phone: order.phone,
-              city: order.city,
-              clientIp: getClientIp(req),
-              userAgent: req.headers.get("user-agent") || undefined,
-              fbp: metaTracking.fbp,
-              fbc: metaTracking.fbc,
+              phone:         order.phone,
+              city:          order.city,
+              clientIp:      getClientIp(req),
+              userAgent:     req.headers.get("user-agent") || undefined,
+              fbp:           metaTracking.fbp,
+              fbc:           metaTracking.fbc,
               eventSourceUrl: metaTracking.event_source_url,
             }),
             6000,
             { ok: false, error: "capi_timeout" }
           );
-          if (!result.ok) {
-            // Safe log — sendCapiPurchase already redacts the token
-            console.error("[Meta CAPI] Purchase failed for order", newOrder.id, ":", result.error);
-          } else {
-            console.log("[Meta CAPI] Purchase sent for order", newOrder.id, "eventId=", metaTracking.event_id);
-          }
-        } catch (capiErr) {
-          console.error("[Meta CAPI] Exception for order", newOrder.id, ":", String(capiErr).slice(0, 200));
+          return result;
+        } catch (err) {
+          return { ok: false, error: String(err).slice(0, 200) };
         }
-      })();
+      })(),
+    ]);
+
+    // ── Post-parallel: update Supabase + log results ───────────────────────
+    const sheet = sheetResult.status === "fulfilled" ? sheetResult.value : { ok: false, error: "rejected" };
+    const capi  = capiResult.status  === "fulfilled" ? capiResult.value  : { ok: false, error: "rejected" };
+
+    // Update google_sheet_synced
+    supabase
+      .from("orders")
+      .update({
+        google_sheet_synced: sheet.ok,
+        google_sheet_error: sheet.ok ? null : ((sheet as SyncResult).error ?? "sync_failed").slice(0, 200),
+      })
+      .eq("id", newOrder.id)
+      .then(() => {/* ignore result */});
+
+    if (!sheet.ok) {
+      console.error("[Google Sheets] Failed for order", newOrder.id, ":", (sheet as SyncResult).error);
+    } else {
+      console.log("[Google Sheets] Order", newOrder.id, "synced successfully");
+    }
+
+    if (canSendCapi) {
+      if (capi.ok) {
+        console.log("[Meta CAPI] Purchase sent successfully for order", newOrder.id, "eventId=", metaTracking.event_id);
+      } else {
+        console.error("[Meta CAPI] Purchase failed for order", newOrder.id, ":", capi.error);
+      }
     } else if (pixelId && !accessToken) {
-      console.log("[Meta CAPI] META_ACCESS_TOKEN not set — skipping CAPI for order", newOrder.id);
+      console.log("[Meta CAPI] META_ACCESS_TOKEN not set — browser Pixel only for order", newOrder.id);
     }
 
     return NextResponse.json({ success: true, order_id: newOrder.id });
