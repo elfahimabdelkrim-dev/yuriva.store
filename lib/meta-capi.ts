@@ -4,6 +4,8 @@
 
 import crypto from "crypto";
 
+const GRAPH_API_VERSION = "v21.0";
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function sha256(value: string): string {
@@ -13,8 +15,7 @@ function sha256(value: string): string {
 /**
  * Normalise a Moroccan phone number for CAPI hashing.
  * Meta expects: digits only, with country code, no leading +.
- * Examples:
- *   "0612345678"   → "212612345678"
+ *   "0612345678"    → "212612345678"
  *   "+212612345678" → "212612345678"
  *   "212612345678"  → "212612345678"
  */
@@ -32,7 +33,6 @@ function hashPhone(raw: string): string | null {
 }
 
 function hashCity(city: string): string {
-  // Meta expects: lowercase, no spaces, no punctuation, digits allowed
   return sha256(city.toLowerCase().replace(/\s+/g, "").trim());
 }
 
@@ -41,32 +41,30 @@ function hashCity(city: string): string {
 export interface CapiPurchaseParams {
   pixelId: string;
   accessToken: string;
+  /** Only pass for debug/test endpoint — NEVER for real production orders */
   testEventCode?: string;
 
-  // Deduplication — MUST match the browser pixel eventID
   eventId: string;
-
-  // Order data
   orderId: string;
   value: number;
   productId: string;
   productTitle: string;
   numItems: number;
 
-  // User data (all optional — include as much as available)
   phone?: string;
   city?: string;
   clientIp?: string;
   userAgent?: string;
-  fbp?: string;   // _fbp cookie
-  fbc?: string;   // _fbc cookie
-
-  // Source
+  fbp?: string;
+  fbc?: string;
   eventSourceUrl?: string;
 }
 
 export interface CapiResult {
   ok: boolean;
+  eventsReceived?: number;
+  messages?: string[];
+  fbtrace_id?: string;
   error?: string;
 }
 
@@ -74,28 +72,16 @@ export interface CapiResult {
 
 export async function sendCapiPurchase(params: CapiPurchaseParams): Promise<CapiResult> {
   const {
-    pixelId,
-    accessToken,
-    testEventCode,
-    eventId,
-    orderId,
-    value,
-    productId,
-    productTitle,
-    numItems,
-    phone,
-    city,
-    clientIp,
-    userAgent,
-    fbp,
-    fbc,
-    eventSourceUrl,
+    pixelId, accessToken, testEventCode,
+    eventId, orderId, value, productId, productTitle, numItems,
+    phone, city, clientIp, userAgent, fbp, fbc, eventSourceUrl,
   } = params;
 
+  // event_time must be Unix seconds, not milliseconds
   const eventTime = Math.floor(Date.now() / 1000);
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://yuriva.store";
 
-  // Build user_data — hash PII, pass IP/UA/cookies in clear
+  // Build user_data — hash PII, pass matching signals in clear
   const userData: Record<string, string> = {};
   if (phone) {
     const hashed = hashPhone(phone);
@@ -125,31 +111,69 @@ export async function sendCapiPurchase(params: CapiPurchaseParams): Promise<Capi
     },
   };
 
-  const body: Record<string, unknown> = {
+  const requestBody: Record<string, unknown> = {
     data: [eventPayload],
     access_token: accessToken,
   };
 
+  // test_event_code routes events to Test Events ONLY — never include for real orders
   if (testEventCode) {
-    body.test_event_code = testEventCode;
+    requestBody.test_event_code = testEventCode;
   }
 
   try {
-    const url = `https://graph.facebook.com/v21.0/${encodeURIComponent(pixelId)}/events`;
+    const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${encodeURIComponent(pixelId)}/events`;
+
     const resp = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(requestBody),
     });
 
-    if (!resp.ok) {
-      const text = await resp.text();
-      // Strip access token from error text before logging
-      const safeText = text.replace(/"access_token"\s*:\s*"[^"]*"/g, '"access_token":"[REDACTED]"').slice(0, 300);
-      return { ok: false, error: `CAPI HTTP ${resp.status}: ${safeText}` };
+    // Always parse Meta's JSON response — HTTP 200 does NOT mean event was accepted
+    let respJson: {
+      events_received?: number;
+      messages?: string[];
+      fbtrace_id?: string;
+      error?: { message?: string; type?: string; code?: number };
+    } = {};
+    try {
+      respJson = await resp.json() as typeof respJson;
+    } catch {
+      return { ok: false, error: `HTTP ${resp.status}: failed to parse Meta response JSON` };
     }
 
-    return { ok: true };
+    const eventsReceived = respJson.events_received ?? 0;
+    const messages       = respJson.messages;
+    const fbtrace_id     = respJson.fbtrace_id;
+
+    if (!resp.ok) {
+      const safeMsg = (respJson.error?.message ?? "unknown")
+        .replace(/"access_token"\s*:\s*"[^"]*"/g, '"access_token":"[REDACTED]"')
+        .slice(0, 300);
+      return {
+        ok: false,
+        eventsReceived,
+        messages,
+        fbtrace_id,
+        error: `HTTP ${resp.status}: ${safeMsg}`,
+      };
+    }
+
+    if (eventsReceived === 0) {
+      // HTTP 200 but Meta rejected the event
+      const safeMsg = messages?.join("; ").slice(0, 300) ?? "events_received=0";
+      return {
+        ok: false,
+        eventsReceived,
+        messages,
+        fbtrace_id,
+        error: safeMsg,
+      };
+    }
+
+    return { ok: true, eventsReceived, messages, fbtrace_id };
+
   } catch (err: unknown) {
     const msg = String(err)
       .replace(/access_token=[^&\s]*/gi, "access_token=[REDACTED]")
@@ -157,3 +181,5 @@ export async function sendCapiPurchase(params: CapiPurchaseParams): Promise<Capi
     return { ok: false, error: msg };
   }
 }
+
+export { GRAPH_API_VERSION };
