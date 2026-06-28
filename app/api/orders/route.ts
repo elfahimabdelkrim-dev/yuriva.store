@@ -126,9 +126,14 @@ export async function POST(req: NextRequest) {
 
         console.log(
           "[Meta CAPI] Purchase send started",
-          "order=" + newOrder.id,
-          "event_id=" + metaTracking.event_id,
-          "value=" + (order.total_amount ?? 0)
+          "order="        + newOrder.id,
+          "event_id="     + metaTracking.event_id,
+          "value="        + (order.total_amount ?? 0),
+          "event_source=" + (metaTracking.event_source_url || "(none)"),
+          "has_fbp="      + !!(metaTracking.fbp),
+          "has_fbc="      + !!(metaTracking.fbc),
+          "has_phone="    + !!(order.phone),
+          "has_ip="       + !!(getClientIp(req))
         );
 
         try {

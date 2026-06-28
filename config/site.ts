@@ -2,7 +2,7 @@ export const siteConfig = {
   name: "YURIVA",
   description:
     "سراول Para، Shorts Para، Cargo pants، Packs ديال الملابس الرجالية — توصيل مجاني والدفع عند الاستلام",
-  url: process.env.NEXT_PUBLIC_SITE_URL || "https://yuriva.ma",
+  url: process.env.NEXT_PUBLIC_SITE_URL || "https://yuriva.store",
   whatsappNumber:
     process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || "212600000000",
   colors: {
