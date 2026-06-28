@@ -4,7 +4,6 @@ import { useRouter } from "next/navigation";
 import { Loader2, ShoppingBag } from "lucide-react";
 import type { Product, ProductColor } from "@/types";
 import { validateMoroccanPhone, formatPrice } from "@/lib/utils";
-import { buildOrderWhatsAppURL } from "@/lib/whatsapp";
 import { siteConfig } from "@/config/site";
 import { fbqInitiateCheckout, fbqPurchase, fbqContact, getCookie } from "@/lib/meta-pixel";
 import toast from "react-hot-toast";
@@ -29,6 +28,75 @@ interface FormState {
   address:   string;
 }
 
+// ── Build a lightweight WhatsApp message from product + optional form data ────
+function buildDirectWhatsAppMessage(opts: {
+  product:       Product;
+  selectedSize:  string;
+  selectedColor: ProductColor | null;
+  packColors:    (ProductColor | null)[];
+  quantity:      number;
+  total:         number;
+  name?:         string;
+  phone?:        string;
+  address?:      string;
+}): string {
+  const { product, selectedSize, selectedColor, packColors, quantity, total,
+          name, phone, address } = opts;
+
+  const productUrl = typeof window !== "undefined"
+    ? `${window.location.origin}/products/${product.slug}`
+    : `https://yuriva.store/products/${product.slug}`;
+
+  // Color line
+  let colorLine = "";
+  if (product.is_pack && packColors.some(Boolean)) {
+    colorLine = packColors
+      .filter(Boolean)
+      .map((c, i) => `قطعة ${i + 1}: ${c?.label ?? ""}`)
+      .join("، ");
+  } else if (selectedColor) {
+    colorLine = selectedColor.label;
+  }
+
+  const lines: string[] = [
+    "السلام عليكم، بغيت نطلب من YURIVA 🛍️",
+    "",
+    `*المنتج:* ${product.title}`,
+    `*الثمن:* ${total} درهم`,
+  ];
+  if (selectedSize)  lines.push(`*المقاس:* ${selectedSize}`);
+  if (colorLine)     lines.push(`*اللون:* ${colorLine}`);
+  if (quantity > 1)  lines.push(`*الكمية:* ${quantity}`);
+  lines.push(`*الرابط:* ${productUrl}`);
+
+  // Optional customer data (not required — include if filled)
+  if (name || phone || address) {
+    lines.push("", "---");
+    if (name)    lines.push(`*الاسم:* ${name}`);
+    if (phone)   lines.push(`*الهاتف:* ${phone}`);
+    if (address) lines.push(`*العنوان:* ${address}`);
+  }
+
+  lines.push("", "من فضلكم بغيت نأكد الطلب 🙏");
+  return lines.join("\n");
+}
+
+// ── Open WhatsApp: app scheme on mobile, wa.me on desktop ─────────────────────
+function openWhatsApp(phoneNumber: string, message: string): void {
+  const encoded  = encodeURIComponent(message);
+  const isMobile = typeof navigator !== "undefined" &&
+    /Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry/i.test(navigator.userAgent);
+
+  if (isMobile) {
+    // whatsapp:// scheme opens the app directly without a redirect page
+    console.log("[WhatsApp Order] Opening WhatsApp app directly");
+    window.location.href = `whatsapp://send?phone=${phoneNumber}&text=${encoded}`;
+  } else {
+    console.log("[WhatsApp Order] Opening WhatsApp web fallback");
+    window.open(`https://wa.me/${phoneNumber}?text=${encoded}`, "_blank");
+  }
+}
+
 export default function InlineOrderForm({ product, selectedColor, packColors }: Props) {
   const router = useRouter();
 
@@ -38,11 +106,7 @@ export default function InlineOrderForm({ product, selectedColor, packColors }: 
 
   const [form,        setForm]        = useState<FormState>({ full_name: "", phone: "", address: "" });
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FormState, string>>>({});
-
-  // Separate loading states so buttons are independent
-  const [submittingCod,      setSubmittingCod]      = useState(false);
-  const [submittingWhatsApp, setSubmittingWhatsApp] = useState(false);
-  const anySubmitting = submittingCod || submittingWhatsApp;
+  const [submittingCod, setSubmittingCod] = useState(false);
 
   const set = (field: keyof FormState, value: string) =>
     setForm((f) => ({ ...f, [field]: value }));
@@ -51,7 +115,9 @@ export default function InlineOrderForm({ product, selectedColor, packColors }: 
     setFieldErrors((e) => ({ ...e, [field]: undefined }));
 
   const safeSizes = Array.isArray(product.sizes) ? product.sizes : [];
+  const total     = product.price * quantity;
 
+  // Validation only used by اشترِ الآن
   const validate = (): boolean => {
     const errs: Partial<Record<keyof FormState, string>> = {};
     if (!form.full_name.trim()) errs.full_name = "الاسم الكامل مطلوب";
@@ -68,14 +134,13 @@ export default function InlineOrderForm({ product, selectedColor, packColors }: 
   };
 
   const buildColorsJson = (): string => {
-    if (product.is_pack && packColors.length > 0) {
+    if (product.is_pack && packColors.length > 0)
       return JSON.stringify(packColors.filter(Boolean).map((c, i) => ({ pieceIndex: i, color: c })));
-    }
     if (selectedColor) return JSON.stringify([selectedColor]);
     return "[]";
   };
 
-  // ── COD submit ──────────────────────────────────────────────────────────────
+  // ── اشترِ الآن — full validation + order creation ─────────────────────────
   const submitCod = async () => {
     if (!validate()) return;
     setSubmittingCod(true);
@@ -84,7 +149,6 @@ export default function InlineOrderForm({ product, selectedColor, packColors }: 
     const fbp = getCookie("_fbp");
     const fbc = getCookie("_fbc");
     const eventSourceUrl = typeof window !== "undefined" ? window.location.href : "";
-    const total = product.price * quantity;
 
     fbqInitiateCheckout(
       { id: product.id, title: product.title, price: product.price },
@@ -163,166 +227,35 @@ export default function InlineOrderForm({ product, selectedColor, packColors }: 
     }
   };
 
-  // ── WhatsApp submit ──────────────────────────────────────────────────────────
-  // CRITICAL: window.open() MUST be called synchronously inside the click handler.
-  // Mobile browsers (Safari, in-app WebViews) block popups opened after any await.
-  // Strategy:
-  //   1. validate() — sync, before any async work
-  //   2. window.open("", "_blank") — sync, immediately on click
-  //   3. await API order creation
-  //   4. navigate the pre-opened window to the WhatsApp URL
-  //   5. If API fails: still open WhatsApp (don't lose the customer)
-  //   6. If popup was blocked (waWin === null): fallback to window.location.href
-  const submitWhatsApp = async () => {
-    console.log("[WhatsApp Order] Clicked");
+  // ── اطلب عبر واتساب — DIRECT, no validation, no API call ─────────────────
+  // Opens WhatsApp immediately with product details.
+  // Form fields are optional — included in the message if already filled.
+  const submitWhatsApp = () => {
+    console.log("[WhatsApp Order] Direct WhatsApp clicked");
 
-    // Step 1 — validate synchronously before doing anything
-    if (!validate()) {
-      console.log("[WhatsApp Order] Validation failed");
-      return;
-    }
+    const phoneNumber = siteConfig.whatsappNumber;
 
-    const whatsappNumber = siteConfig.whatsappNumber;
-    if (!whatsappNumber || whatsappNumber === "212600000000") {
-      console.warn("[WhatsApp Order] NEXT_PUBLIC_WHATSAPP_NUMBER is not configured");
-    }
-
-    // Step 2 — open a blank window SYNCHRONOUSLY (must be in click handler, before any await)
-    // This is the only reliable way to bypass popup blockers on mobile
-    let waWin: Window | null = null;
-    try {
-      waWin = window.open("", "_blank");
-    } catch {
-      // Some environments throw — handle gracefully below
-    }
-
-    setSubmittingWhatsApp(true);
-
-    const total = product.price * quantity;
-    const purchaseEventId = `purchase_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-    const fbp = getCookie("_fbp");
-    const fbc = getCookie("_fbc");
-    const eventSourceUrl = typeof window !== "undefined" ? window.location.href : "";
-
-    fbqInitiateCheckout(
-      { id: product.id, title: product.title, price: product.price },
+    const message = buildDirectWhatsAppMessage({
+      product,
+      selectedSize,
+      selectedColor,
+      packColors,
       quantity,
-      selectedSize || undefined
-    );
+      total,
+      name:    form.full_name.trim()  || undefined,
+      phone:   form.phone.trim()      || undefined,
+      address: form.address.trim()    || undefined,
+    });
 
-    // Step 3 — try to save the order (async)
-    let orderId = "";
-    let orderSaved = false;
-    try {
-      const nameParts = form.full_name.trim().split(/\s+/);
-      const firstName = nameParts[0] ?? "";
-      const lastName  = nameParts.slice(1).join(" ") || firstName;
+    // Fire Contact tracking event (non-blocking — never prevents WhatsApp from opening)
+    try { fbqContact(); } catch { /* ignore */ }
 
-      const res  = await fetch("/api/orders", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          order: {
-            customer_first_name: firstName,
-            customer_last_name:  lastName,
-            phone:   form.phone.trim(),
-            city:    "",
-            address: form.address.trim(),
-            notes:   undefined,
-            total_amount:   total,
-            delivery_price: 0,
-            payment_method: "cod" as const,
-            status:         "جديد" as const,
-            source:         "whatsapp_direct",
-          },
-          items: [{
-            product_id:    product.id,
-            product_title: product.title,
-            product_price: product.price,
-            quantity,
-            size:   selectedSize,
-            colors: buildColorsJson(),
-            total,
-          }],
-          meta: {
-            event_id:         purchaseEventId,
-            fbp:              fbp  || undefined,
-            fbc:              fbc  || undefined,
-            event_source_url: eventSourceUrl || undefined,
-          },
-        }),
-      });
-      const data = await res.json() as { success: boolean; order_id?: string };
-
-      if (data.success && data.order_id) {
-        orderId    = data.order_id;
-        orderSaved = true;
-        console.log("[WhatsApp Order] Order saved", orderId);
-        fbqPurchase(
-          { id: product.id, title: product.title, price: product.price },
-          orderId, total, quantity, purchaseEventId
-        );
-      }
-    } catch (err) {
-      // Order save failed — still open WhatsApp so we don\'t lose the customer
-      console.warn("[WhatsApp Order] Order save failed — opening WhatsApp anyway", err);
-    }
-
-    // Step 4 — build WhatsApp URL (with or without orderId)
-    const url = buildOrderWhatsAppURL(
-      {
-        customer_name: form.full_name.trim(),
-        phone:         form.phone.trim(),
-        city:          "",
-        address:       form.address.trim(),
-        notes:         "",
-        items: [{
-          id:            orderId,
-          product_id:    product.id,
-          product_title: product.title,
-          product_slug:  product.slug,
-          product_image: product.main_image,
-          price:         product.price,
-          quantity,
-          size:          selectedSize,
-          color:         selectedColor ?? undefined,
-          pack_colors:   product.is_pack && packColors
-            ? packColors.filter(Boolean).map((c, i) => ({ pieceIndex: i, color: c! }))
-            : undefined,
-          is_pack:     product.is_pack,
-          pack_pieces: product.pack_pieces,
-        }],
-        total,
-        delivery_price: 0,
-        order_id: orderId,
-      },
-      whatsappNumber
-    );
-
-    // Step 5 — navigate the pre-opened window (or fallback)
-    console.log("[WhatsApp Order] Opening WhatsApp");
-    try {
-      if (waWin && !waWin.closed) {
-        waWin.location.href = url;
-      } else {
-        // Popup was blocked by the browser — navigate current tab as fallback
-        console.log("[WhatsApp Order] Open fallback used");
-        window.location.href = url;
-      }
-    } catch {
-      console.log("[WhatsApp Order] Open fallback used");
-      window.location.href = url;
-    }
-
-    fbqContact();
-    if (orderSaved) toast.success("تحفظ الطلب! فتح واتساب...");
-    setSubmittingWhatsApp(false);
+    openWhatsApp(phoneNumber, message);
   };
 
   const inp    = "w-full border border-gray-300 focus:border-brand-navy px-3 py-2.5 text-sm outline-none transition-colors rounded-sm";
   const lbl    = "block text-sm font-bold text-brand-navy mb-1";
   const errCls = "text-red-500 text-xs mt-1";
-  const total  = product.price * quantity;
 
   return (
     <div className="mt-6 pt-6 border-t border-gray-100 space-y-4">
@@ -331,7 +264,7 @@ export default function InlineOrderForm({ product, selectedColor, packColors }: 
       {/* ── المقاس ── */}
       {safeSizes.length > 0 && (
         <div>
-          <label className={lbl}>المقاس *</label>
+          <label className={lbl}>المقاس</label>
           <div className="flex flex-wrap gap-2">
             {safeSizes.map((s) => (
               <button
@@ -398,30 +331,28 @@ export default function InlineOrderForm({ product, selectedColor, packColors }: 
         <span className="font-black text-brand-navy text-lg">{formatPrice(total)}</span>
       </div>
 
-      {/* Submit buttons */}
+      {/* Buttons */}
       <div className="flex flex-col gap-3 pt-1">
-        {/* اشترِ الآن */}
+        {/* اشترِ الآن — validates + creates order */}
         <button
           type="button"
           onClick={submitCod}
-          disabled={anySubmitting}
+          disabled={submittingCod}
           className="btn-purchase-animate w-full bg-[#16A34A] text-white font-bold py-4 flex items-center justify-center gap-2 hover:bg-[#15803d] active:scale-95 transition-all text-base disabled:opacity-60 disabled:[animation:none] rounded-sm"
         >
           {submittingCod ? <Loader2 className="h-5 w-5 animate-spin" /> : <ShoppingBag className="h-5 w-5" />}
           {submittingCod ? "كيتم التسجيل..." : "اشترِ الآن"}
         </button>
 
-        {/* اطلب عبر واتساب */}
+        {/* اطلب عبر واتساب — opens WhatsApp directly, no validation */}
         <button
           type="button"
           onClick={submitWhatsApp}
-          disabled={anySubmitting}
+          disabled={submittingCod}
           className="w-full border-2 border-[#25D366] text-brand-navy font-bold py-4 flex items-center justify-center gap-2 hover:bg-[#25D366] hover:text-white transition-all text-base disabled:opacity-60 rounded-sm"
         >
-          {submittingWhatsApp
-            ? <Loader2 className="h-5 w-5 animate-spin" />
-            : <WhatsAppIcon className="h-5 w-5 text-[#25D366]" />}
-          {submittingWhatsApp ? "كيتم فتح واتساب..." : "اطلب عبر واتساب"}
+          <WhatsAppIcon className="h-5 w-5 text-[#25D366]" />
+          اطلب عبر واتساب
         </button>
       </div>
 
