@@ -18,10 +18,10 @@ export async function GET(req: NextRequest) {
 
     let productQuery = supabase
       .from("products")
-      .select("id, title, slug, main_image, product_images(id, url, sort_order, image_type)");
+      .select("id, title, slug, main_image, product_images(id, image_url, alt_text, sort_order, image_type)");
 
-    if (id)   productQuery = productQuery.eq("id", id);
-    else      productQuery = productQuery.eq("slug", slug!);
+    if (id)  productQuery = productQuery.eq("id", id);
+    else     productQuery = productQuery.eq("slug", slug!);
 
     const { data, error } = await productQuery.maybeSingle();
 
@@ -30,21 +30,22 @@ export async function GET(req: NextRequest) {
     if (!data)
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
 
-    const rawImages = Array.isArray(data.product_images) ? data.product_images : [];
+    type RawImage = { id?: string; image_url?: string; alt_text?: string; sort_order?: number; image_type?: string };
+    const rawImages: RawImage[] = Array.isArray(data.product_images) ? (data.product_images as RawImage[]) : [];
     const sorted = [...rawImages].sort(
-      (a: { sort_order?: number }, b: { sort_order?: number }) =>
-        (a.sort_order ?? 0) - (b.sort_order ?? 0)
+      (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)
     );
 
     return NextResponse.json({
-      product_id:    data.id,
-      title:         data.title,
-      slug:          data.slug,
-      main_image:    data.main_image,
-      gallery_count: rawImages.length,
-      total_images:  rawImages.length + (data.main_image ? 1 : 0),
-      gallery_images: sorted.map((img: { url?: string; sort_order?: number; image_type?: string }) => ({
-        url:        img.url,
+      product_id:       data.id,
+      title:            data.title,
+      slug:             data.slug,
+      mainImage:        data.main_image,
+      extraImagesCount: rawImages.length,
+      finalGalleryCount: rawImages.length + (data.main_image ? 1 : 0),
+      extraImages: sorted.map((img) => ({
+        image_url:  img.image_url,
+        alt_text:   img.alt_text,
         sort_order: img.sort_order,
         image_type: img.image_type,
       })),

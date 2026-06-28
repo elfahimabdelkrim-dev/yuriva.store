@@ -62,8 +62,8 @@ export async function POST(req: NextRequest) {
         .slice(0, 7)
         .map((url: string, i: number) => ({
           product_id: data.id,
-          url,
-          alt: String(productData.title ?? ""),
+          image_url: url,
+          alt_text: String(productData.title ?? ""),
           sort_order: i + 1,
           image_type: "gallery",
         }));

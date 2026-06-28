@@ -67,7 +67,7 @@ function safeImages(row: Record<string, unknown>): ProductImage[] {
     if (!img || typeof img !== "object") continue;
     const i = img as Record<string, unknown>;
     const url = i.url ?? i.image_url ?? i.src;
-    addUrl(url, String(i.alt ?? row.title ?? "صورة المنتج"), {
+    addUrl(url, String(i.alt_text ?? i.alt ?? row.title ?? "صورة المنتج"), {
       id: String(i.id ?? ""),
       sort_order: Number(i.sort_order ?? 0),
       image_type: (i.image_type as "main" | "gallery") ?? "gallery",
