@@ -27,7 +27,6 @@ interface FormState {
   address:   string;
 }
 
-// Build WhatsApp message from product + optional form data
 function buildDirectWhatsAppMessage(opts: {
   product:       Product;
   selectedSize:  string;
@@ -46,7 +45,6 @@ function buildDirectWhatsAppMessage(opts: {
     ? `${window.location.origin}/products/${product.slug}`
     : `https://yuriva.store/products/${product.slug}`;
 
-  // Color line
   let colorLine = "";
   if (product.is_pack && packColors.some(Boolean)) {
     colorLine = packColors
@@ -58,7 +56,7 @@ function buildDirectWhatsAppMessage(opts: {
   }
 
   const lines: string[] = [
-    "السلام عليكم، بغيت نطلب من YURIVA 🛍️",
+    "السلام عليكم، بغيت نطلب من YURIVA 🛙️",
     "",
     `*المنتج:* ${product.title}`,
     `*الثمن:* ${total} درهم`,
@@ -79,12 +77,10 @@ function buildDirectWhatsAppMessage(opts: {
   return lines.join("\n");
 }
 
-// Open WhatsApp: app scheme on mobile, wa.me on desktop
 function openWhatsApp(phoneNumber: string, message: string): void {
   const encoded  = encodeURIComponent(message);
   const isMobile = typeof navigator !== "undefined" &&
     /Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry/i.test(navigator.userAgent);
-
   if (isMobile) {
     console.log("[WhatsApp Order] Opening WhatsApp app directly");
     window.location.href = `whatsapp://send?phone=${phoneNumber}&text=${encoded}`;
@@ -101,7 +97,6 @@ export default function InlineOrderForm({ product }: Props) {
   const [sizeError,    setSizeError]    = useState("");
   const quantity = 1;
 
-  // Color state (moved from ProductInfo)
   const safeColors = Array.isArray(product.colors) ? product.colors : [];
   const safePieces = Math.max(1, Math.min(Number(product.pack_pieces) || 1, 20));
   const [selectedColor, setSelectedColor] = useState<ProductColor | null>(null);
@@ -120,14 +115,12 @@ export default function InlineOrderForm({ product }: Props) {
   const clearErr = (field: keyof FormState) =>
     setFieldErrors((e) => ({ ...e, [field]: undefined }));
 
-  const safeSizes = Array.isArray(product.sizes) ? product.sizes : [];
-  const total     = product.price * quantity;
-
-  const hasColors     = safeColors.length > 0;
-  const isPack        = !!product.is_pack && !!product.allow_piece_colors;
+  const safeSizes       = Array.isArray(product.sizes) ? product.sizes : [];
+  const total           = product.price * quantity;
+  const hasColors       = safeColors.length > 0;
+  const isPack          = !!product.is_pack && !!product.allow_piece_colors;
   const chosenPackCount = packColors.filter(Boolean).length;
 
-  // Validate — used only by اشترِ الآن
   const validate = (): boolean => {
     const errs: Partial<Record<keyof FormState, string>> = {};
     if (!form.full_name.trim()) errs.full_name = "الاسم ديالك مطلوب";
@@ -138,27 +131,20 @@ export default function InlineOrderForm({ product }: Props) {
     if (safeSizes.length > 0 && !selectedSize) {
       setSizeError("خاصك تختار القياس");
       sizeOk = false;
-    } else {
-      setSizeError("");
-    }
+    } else { setSizeError(""); }
 
-    // Color validation for اشترِ الآن
     let colorOk = true;
     if (hasColors) {
       if (isPack) {
         if (chosenPackCount < safePieces) {
           setColorError(`خاصك تختار لون لكل قطعة (${chosenPackCount} من ${safePieces})`);
           colorOk = false;
-        } else {
-          setColorError("");
-        }
+        } else { setColorError(""); }
       } else {
         if (!selectedColor) {
           setColorError("خاصك تختار اللون");
           colorOk = false;
-        } else {
-          setColorError("");
-        }
+        } else { setColorError(""); }
       }
     }
 
@@ -184,27 +170,22 @@ export default function InlineOrderForm({ product }: Props) {
     return "";
   };
 
-  // اشترِ الآن — full validation + order creation
   const submitCod = async () => {
     if (!validate()) return;
     setSubmittingCod(true);
-
     const purchaseEventId = `purchase_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const fbp = getCookie("_fbp");
     const fbc = getCookie("_fbc");
     const eventSourceUrl = typeof window !== "undefined" ? window.location.href : "";
-
     fbqInitiateCheckout(
       { id: product.id, title: product.title, price: product.price },
       quantity,
       selectedSize || undefined
     );
-
     try {
       const nameParts = form.full_name.trim().split(/\s+/);
       const firstName = nameParts[0] ?? "";
       const lastName  = nameParts.slice(1).join(" ") || firstName;
-
       const res = await fetch("/api/orders", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
@@ -240,19 +221,16 @@ export default function InlineOrderForm({ product }: Props) {
         }),
       });
       const data = await res.json() as { success: boolean; order_id?: string; error?: string };
-
       if (!data.success) {
         toast.error(data.error || "خطأ في تسجيل الطلب، عاود المحاولة");
         setSubmittingCod(false);
         return;
       }
-
       const orderId = data.order_id ?? "";
       fbqPurchase(
         { id: product.id, title: product.title, price: product.price },
         orderId, total, quantity, purchaseEventId
       );
-
       const qs = new URLSearchParams({
         order_id: orderId,
         name:     form.full_name.trim(),
@@ -272,196 +250,203 @@ export default function InlineOrderForm({ product }: Props) {
     }
   };
 
-  // اطلب عبر واتساب — DIRECT, no validation, no API call
   const submitWhatsApp = () => {
     console.log("[WhatsApp Order] Direct WhatsApp clicked");
-
     const phoneNumber = siteConfig.whatsappNumber;
     const message = buildDirectWhatsAppMessage({
-      product,
-      selectedSize,
-      selectedColor,
-      packColors,
-      quantity,
-      total,
+      product, selectedSize, selectedColor, packColors, quantity, total,
       name:    form.full_name.trim()  || undefined,
       phone:   form.phone.trim()      || undefined,
       address: form.address.trim()    || undefined,
     });
-
     try { fbqContact(); } catch { /* ignore */ }
-
     openWhatsApp(phoneNumber, message);
   };
 
-  const inp    = "w-full border border-gray-300 focus:border-brand-navy px-3 py-2.5 text-sm outline-none transition-colors rounded-sm";
+  const inp    = "w-full border border-gray-300 focus:border-brand-navy px-3 py-2.5 text-sm outline-none transition-colors rounded-lg";
   const lbl    = "block text-sm font-bold text-brand-navy mb-1";
   const errCls = "text-red-500 text-xs mt-1";
 
   return (
-    <div className="mt-6 pt-6 border-t border-gray-100 space-y-4">
+    <div className="mt-6 bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
 
-      {/* Title + helper */}
-      <div>
-        <h3 className="font-black text-brand-navy text-lg">كمّل طلبك فـ 30 ثانية</h3>
-        <p className="text-xs text-brand-gray mt-0.5">الدفع عند الاستلام والتأكيد عبر الهاتف</p>
+      {/* Card header */}
+      <div className="px-5 pt-5 pb-4 border-b border-gray-100 bg-gradient-to-l from-slate-50 to-white">
+        <h3 className="font-black text-brand-navy text-xl leading-snug">كمّل طلبك فـ 30 ثانية</h3>
+        <p className="text-xs text-brand-gray mt-1">الدفع عند الاستلام والتأكيد عبر الهاتف</p>
       </div>
 
-      {/* المقاس */}
-      {safeSizes.length > 0 && (
-        <div>
-          <label className={lbl}>المقاس</label>
-          <div className="flex flex-wrap gap-2">
-            {safeSizes.map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => { setSelectedSize(s); setSizeError(""); }}
-                className={`px-4 py-2 border text-sm font-bold transition-all rounded-sm ${
-                  selectedSize === s
-                    ? "bg-brand-navy text-white border-brand-navy"
-                    : "border-gray-300 text-brand-navy hover:border-brand-navy"
-                }`}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-          {sizeError && <p className={errCls}>{sizeError}</p>}
+      {/* Trust strip */}
+      <div className="flex items-center justify-around bg-gray-50 border-b border-gray-100 py-3 px-3">
+        <div className="flex flex-col items-center gap-0.5">
+          <span className="text-lg leading-none">💳</span>
+          <span className="text-[10px] font-semibold text-brand-navy text-center leading-tight">الدفع عند<br />الاستلام</span>
         </div>
-      )}
-
-      {/* اللون — non-pack single color selector */}
-      {!isPack && hasColors && (
-        <div>
-          <p className="font-bold text-brand-navy text-sm mb-2">
-            اللون{selectedColor ? `: ${selectedColor.label}` : ""}
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {safeColors.map((color) => (
-              <button
-                key={color.name}
-                type="button"
-                onClick={() => { setSelectedColor(color); setColorError(""); }}
-                title={color.label}
-                className={`flex items-center gap-1.5 px-3 py-2 border text-sm font-medium transition-all rounded-sm ${
-                  selectedColor?.name === color.name
-                    ? "border-brand-navy bg-brand-navy text-white"
-                    : "border-gray-300 text-brand-navy hover:border-brand-navy"
-                }`}
-              >
-                <span
-                  className="w-4 h-4 rounded-full border border-white/50 shadow-sm"
-                  style={{ backgroundColor: color.hex }}
-                />
-                {color.label}
-              </button>
-            ))}
-          </div>
-          {colorError && <p className={errCls}>{colorError}</p>}
+        <div className="w-px h-8 bg-gray-200" />
+        <div className="flex flex-col items-center gap-0.5">
+          <span className="text-lg leading-none">🚚</span>
+          <span className="text-[10px] font-semibold text-brand-navy text-center leading-tight">توصيل<br />مجاني</span>
         </div>
-      )}
+        <div className="w-px h-8 bg-gray-200" />
+        <div className="flex flex-col items-center gap-0.5">
+          <span className="text-lg leading-none">📞</span>
+          <span className="text-[10px] font-semibold text-brand-navy text-center leading-tight">تأكيد<br />عبر الهاتف</span>
+        </div>
+      </div>
 
-      {/* اللون — pack multi-color selector */}
-      {isPack && hasColors && (
+      {/* Form fields */}
+      <div className="px-5 py-5 space-y-4">
+
+        {/* المقاس */}
+        {safeSizes.length > 0 && (
+          <div>
+            <label className={lbl}>المقاس</label>
+            <div className="flex flex-wrap gap-2">
+              {safeSizes.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => { setSelectedSize(s); setSizeError(""); }}
+                  className={`px-4 py-2 border text-sm font-bold transition-all rounded-lg ${
+                    selectedSize === s
+                      ? "bg-brand-navy text-white border-brand-navy"
+                      : "border-gray-300 text-brand-navy hover:border-brand-navy"
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+            {sizeError && <p className={errCls}>{sizeError}</p>}
+          </div>
+        )}
+
+        {/* اللون — non-pack */}
+        {!isPack && hasColors && (
+          <div>
+            <p className="font-bold text-brand-navy text-sm mb-2">
+              اللون{selectedColor ? `: ${selectedColor.label}` : ""}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {safeColors.map((color) => (
+                <button
+                  key={color.name}
+                  type="button"
+                  onClick={() => { setSelectedColor(color); setColorError(""); }}
+                  title={color.label}
+                  className={`flex items-center gap-1.5 px-3 py-2 border text-sm font-medium transition-all rounded-lg ${
+                    selectedColor?.name === color.name
+                      ? "border-brand-navy bg-brand-navy text-white"
+                      : "border-gray-300 text-brand-navy hover:border-brand-navy"
+                  }`}
+                >
+                  <span
+                    className="w-4 h-4 rounded-full border border-white/50 shadow-sm"
+                    style={{ backgroundColor: color.hex }}
+                  />
+                  {color.label}
+                </button>
+              ))}
+            </div>
+            {colorError && <p className={errCls}>{colorError}</p>}
+          </div>
+        )}
+
+        {/* اللون — pack */}
+        {isPack && hasColors && (
+          <div>
+            <p className="font-bold text-brand-navy text-sm mb-2">
+              {chosenPackCount > 0
+                ? `اخترت ${chosenPackCount} من ${safePieces} ألوان`
+                : "اختر لون كل قطعة"}
+            </p>
+            <PackColorSelector
+              pieces={safePieces}
+              colors={safeColors}
+              selected={packColors}
+              onChange={(i, c) => {
+                const updated = [...packColors];
+                updated[i] = c;
+                setPackColors(updated);
+                if (colorError) setColorError("");
+              }}
+              error={colorError || undefined}
+            />
+          </div>
+        )}
+
+        {/* الاسم ديالك */}
         <div>
-          <p className="font-bold text-brand-navy text-sm mb-2">
-            {chosenPackCount > 0
-              ? `اخترت ${chosenPackCount} من ${safePieces} ألوان`
-              : "اختر لون كل قطعة"}
-          </p>
-          <PackColorSelector
-            pieces={safePieces}
-            colors={safeColors}
-            selected={packColors}
-            onChange={(i, c) => {
-              const updated = [...packColors];
-              updated[i] = c;
-              setPackColors(updated);
-              if (colorError) setColorError("");
-            }}
-            error={colorError || undefined}
+          <label className={lbl}>الاسم ديالك *</label>
+          <input
+            type="text"
+            className={inp}
+            placeholder="مثال: فاطمة"
+            value={form.full_name}
+            onChange={(e) => { set("full_name", e.target.value); clearErr("full_name"); }}
           />
+          {fieldErrors.full_name && <p className={errCls}>{fieldErrors.full_name}</p>}
         </div>
-      )}
 
-      {/* الاسم ديالك */}
-      <div>
-        <label className={lbl}>الاسم ديالك *</label>
-        <input
-          type="text"
-          className={inp}
-          placeholder="مثال: فاطمة"
-          value={form.full_name}
-          onChange={(e) => { set("full_name", e.target.value); clearErr("full_name"); }}
-        />
-        {fieldErrors.full_name && <p className={errCls}>{fieldErrors.full_name}</p>}
+        {/* رقم الهاتف */}
+        <div>
+          <label className={lbl}>رقم الهاتف *</label>
+          <input
+            type="tel"
+            className={inp}
+            placeholder="مثال: 0660000000"
+            dir="ltr"
+            value={form.phone}
+            onChange={(e) => { set("phone", e.target.value); clearErr("phone"); }}
+          />
+          {fieldErrors.phone && <p className={errCls}>{fieldErrors.phone}</p>}
+        </div>
+
+        {/* المدينة والعنوان */}
+        <div>
+          <label className={lbl}>المدينة والعنوان *</label>
+          <textarea
+            className={inp + " resize-none"}
+            rows={2}
+            placeholder="مثال: الدار البيضاء، سباتة، قرب المسجد"
+            value={form.address}
+            onChange={(e) => { set("address", e.target.value); clearErr("address"); }}
+          />
+          {fieldErrors.address && <p className={errCls}>{fieldErrors.address}</p>}
+        </div>
+
+        {/* المجموع الكلي */}
+        <div className="bg-brand-light p-3 flex items-center justify-between rounded-xl">
+          <span className="text-sm text-brand-gray">المجموع الكلي</span>
+          <span className="font-black text-brand-navy text-lg">{formatPrice(total)}</span>
+        </div>
+
+        {/* Buttons */}
+        <div className="flex flex-col gap-3 pt-1">
+          <button
+            type="button"
+            onClick={submitCod}
+            disabled={submittingCod}
+            className="btn-purchase-animate w-full bg-[#16A34A] text-white font-bold py-4 flex items-center justify-center gap-2 hover:bg-[#15803d] active:scale-95 transition-all text-base disabled:opacity-60 disabled:[animation:none] rounded-xl"
+          >
+            {submittingCod ? <Loader2 className="h-5 w-5 animate-spin" /> : <ShoppingBag className="h-5 w-5" />}
+            {submittingCod ? "كيتم التسجيل..." : "اشترِ الآن"}
+          </button>
+
+          <p className="text-xs text-center text-brand-gray">ما عرفتيش تعمر الطلب؟</p>
+
+          <button
+            type="button"
+            onClick={submitWhatsApp}
+            disabled={submittingCod}
+            className="w-full border-2 border-[#25D366] text-brand-navy font-bold py-4 flex items-center justify-center gap-2 hover:bg-[#25D366] hover:text-white transition-all text-base disabled:opacity-60 rounded-xl"
+          >
+            <WhatsAppIcon className="h-5 w-5 text-[#25D366]" />
+            اطلب عبر واتساب
+          </button>
+        </div>
+
       </div>
-
-      {/* رقم الهاتف */}
-      <div>
-        <label className={lbl}>رقم الهاتف *</label>
-        <input
-          type="tel"
-          className={inp}
-          placeholder="مثال: 0660000000"
-          dir="ltr"
-          value={form.phone}
-          onChange={(e) => { set("phone", e.target.value); clearErr("phone"); }}
-        />
-        {fieldErrors.phone && <p className={errCls}>{fieldErrors.phone}</p>}
-      </div>
-
-      {/* المدينة والعنوان */}
-      <div>
-        <label className={lbl}>المدينة والعنوان *</label>
-        <textarea
-          className={inp + " resize-none"}
-          rows={2}
-          placeholder="مثال: الدار البيضاء، سباتة، قرب المسجد"
-          value={form.address}
-          onChange={(e) => { set("address", e.target.value); clearErr("address"); }}
-        />
-        {fieldErrors.address && <p className={errCls}>{fieldErrors.address}</p>}
-      </div>
-
-      {/* المجموع الكلي */}
-      <div className="bg-brand-light p-3 flex items-center justify-between rounded-sm">
-        <span className="text-sm text-brand-gray">المجموع الكلي</span>
-        <span className="font-black text-brand-navy text-lg">{formatPrice(total)}</span>
-      </div>
-
-      {/* Buttons */}
-      <div className="flex flex-col gap-3 pt-1">
-        {/* اشترِ الآن */}
-        <button
-          type="button"
-          onClick={submitCod}
-          disabled={submittingCod}
-          className="btn-purchase-animate w-full bg-[#16A34A] text-white font-bold py-4 flex items-center justify-center gap-2 hover:bg-[#15803d] active:scale-95 transition-all text-base disabled:opacity-60 disabled:[animation:none] rounded-sm"
-        >
-          {submittingCod ? <Loader2 className="h-5 w-5 animate-spin" /> : <ShoppingBag className="h-5 w-5" />}
-          {submittingCod ? "كيتم التسجيل..." : "اشترِ الآن"}
-        </button>
-
-        {/* WhatsApp section */}
-        <p className="text-xs text-center text-brand-gray">ما عرفتيش تعمر الطلب؟</p>
-
-        {/* اطلب عبر واتساب — opens WhatsApp directly, no validation */}
-        <button
-          type="button"
-          onClick={submitWhatsApp}
-          disabled={submittingCod}
-          className="w-full border-2 border-[#25D366] text-brand-navy font-bold py-4 flex items-center justify-center gap-2 hover:bg-[#25D366] hover:text-white transition-all text-base disabled:opacity-60 rounded-sm"
-        >
-          <WhatsAppIcon className="h-5 w-5 text-[#25D366]" />
-          اطلب عبر واتساب
-        </button>
-      </div>
-
-      <p className="text-xs text-center text-brand-gray">
-        💳 الدفع عند الاستلام — توصيل مجاني 100%
-      </p>
     </div>
   );
 }
