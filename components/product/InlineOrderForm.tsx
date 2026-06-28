@@ -6,6 +6,7 @@ import type { Product, ProductColor } from "@/types";
 import { validateMoroccanPhone, formatPrice } from "@/lib/utils";
 import { siteConfig } from "@/config/site";
 import { fbqInitiateCheckout, fbqPurchase, fbqContact, getCookie } from "@/lib/meta-pixel";
+import PackColorSelector from "./PackColorSelector";
 import toast from "react-hot-toast";
 
 function WhatsAppIcon({ className = "h-5 w-5" }: { className?: string }) {
@@ -18,8 +19,6 @@ function WhatsAppIcon({ className = "h-5 w-5" }: { className?: string }) {
 
 interface Props {
   product: Product;
-  selectedColor: ProductColor | null;
-  packColors: (ProductColor | null)[];
 }
 
 interface FormState {
@@ -28,7 +27,7 @@ interface FormState {
   address:   string;
 }
 
-// ── Build a lightweight WhatsApp message from product + optional form data ────
+// Build WhatsApp message from product + optional form data
 function buildDirectWhatsAppMessage(opts: {
   product:       Product;
   selectedSize:  string;
@@ -64,12 +63,11 @@ function buildDirectWhatsAppMessage(opts: {
     `*المنتج:* ${product.title}`,
     `*الثمن:* ${total} درهم`,
   ];
-  if (selectedSize)  lines.push(`*المقاس:* ${selectedSize}`);
-  if (colorLine)     lines.push(`*اللون:* ${colorLine}`);
-  if (quantity > 1)  lines.push(`*الكمية:* ${quantity}`);
+  if (selectedSize) lines.push(`*المقاس:* ${selectedSize}`);
+  if (colorLine)    lines.push(`*اللون:* ${colorLine}`);
+  if (quantity > 1) lines.push(`*الكمية:* ${quantity}`);
   lines.push(`*الرابط:* ${productUrl}`);
 
-  // Optional customer data (not required — include if filled)
   if (name || phone || address) {
     lines.push("", "---");
     if (name)    lines.push(`*الاسم:* ${name}`);
@@ -81,14 +79,13 @@ function buildDirectWhatsAppMessage(opts: {
   return lines.join("\n");
 }
 
-// ── Open WhatsApp: app scheme on mobile, wa.me on desktop ─────────────────────
+// Open WhatsApp: app scheme on mobile, wa.me on desktop
 function openWhatsApp(phoneNumber: string, message: string): void {
   const encoded  = encodeURIComponent(message);
   const isMobile = typeof navigator !== "undefined" &&
     /Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry/i.test(navigator.userAgent);
 
   if (isMobile) {
-    // whatsapp:// scheme opens the app directly without a redirect page
     console.log("[WhatsApp Order] Opening WhatsApp app directly");
     window.location.href = `whatsapp://send?phone=${phoneNumber}&text=${encoded}`;
   } else {
@@ -97,12 +94,21 @@ function openWhatsApp(phoneNumber: string, message: string): void {
   }
 }
 
-export default function InlineOrderForm({ product, selectedColor, packColors }: Props) {
+export default function InlineOrderForm({ product }: Props) {
   const router = useRouter();
 
   const [selectedSize, setSelectedSize] = useState("");
   const [sizeError,    setSizeError]    = useState("");
   const quantity = 1;
+
+  // Color state (moved from ProductInfo)
+  const safeColors = Array.isArray(product.colors) ? product.colors : [];
+  const safePieces = Math.max(1, Math.min(Number(product.pack_pieces) || 1, 20));
+  const [selectedColor, setSelectedColor] = useState<ProductColor | null>(null);
+  const [packColors, setPackColors] = useState<(ProductColor | null)[]>(
+    Array(safePieces).fill(null)
+  );
+  const [colorError, setColorError] = useState("");
 
   const [form,        setForm]        = useState<FormState>({ full_name: "", phone: "", address: "" });
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FormState, string>>>({});
@@ -117,30 +123,68 @@ export default function InlineOrderForm({ product, selectedColor, packColors }: 
   const safeSizes = Array.isArray(product.sizes) ? product.sizes : [];
   const total     = product.price * quantity;
 
-  // Validation only used by اشترِ الآن
+  const hasColors     = safeColors.length > 0;
+  const isPack        = !!product.is_pack && !!product.allow_piece_colors;
+  const chosenPackCount = packColors.filter(Boolean).length;
+
+  // Validate — used only by اشترِ الآن
   const validate = (): boolean => {
     const errs: Partial<Record<keyof FormState, string>> = {};
-    if (!form.full_name.trim()) errs.full_name = "الاسم الكامل مطلوب";
+    if (!form.full_name.trim()) errs.full_name = "الاسم ديالك مطلوب";
     if (!validateMoroccanPhone(form.phone)) errs.phone = "دخل رقم هاتف صحيح (06، 07، +212...)";
     if (!form.address.trim()) errs.address = "العنوان مطلوب";
+
+    let sizeOk = true;
     if (safeSizes.length > 0 && !selectedSize) {
       setSizeError("خاصك تختار القياس");
-      setFieldErrors(errs);
-      return false;
+      sizeOk = false;
+    } else {
+      setSizeError("");
     }
-    setSizeError("");
+
+    // Color validation for اشترِ الآن
+    let colorOk = true;
+    if (hasColors) {
+      if (isPack) {
+        if (chosenPackCount < safePieces) {
+          setColorError(`خاصك تختار لون لكل قطعة (${chosenPackCount} من ${safePieces})`);
+          colorOk = false;
+        } else {
+          setColorError("");
+        }
+      } else {
+        if (!selectedColor) {
+          setColorError("خاصك تختار اللون");
+          colorOk = false;
+        } else {
+          setColorError("");
+        }
+      }
+    }
+
     setFieldErrors(errs);
-    return Object.keys(errs).length === 0;
+    return Object.keys(errs).length === 0 && sizeOk && colorOk;
   };
 
   const buildColorsJson = (): string => {
-    if (product.is_pack && packColors.length > 0)
+    if (isPack && packColors.length > 0)
       return JSON.stringify(packColors.filter(Boolean).map((c, i) => ({ pieceIndex: i, color: c })));
     if (selectedColor) return JSON.stringify([selectedColor]);
     return "[]";
   };
 
-  // ── اشترِ الآن — full validation + order creation ─────────────────────────
+  const buildColorsParam = (): string => {
+    if (isPack && packColors.some(Boolean)) {
+      return packColors
+        .filter(Boolean)
+        .map((c, i) => `قطعة ${i + 1}: ${c?.label ?? ""}`)
+        .join("، ");
+    }
+    if (selectedColor) return selectedColor.label;
+    return "";
+  };
+
+  // اشترِ الآن — full validation + order creation
   const submitCod = async () => {
     if (!validate()) return;
     setSubmittingCod(true);
@@ -161,7 +205,7 @@ export default function InlineOrderForm({ product, selectedColor, packColors }: 
       const firstName = nameParts[0] ?? "";
       const lastName  = nameParts.slice(1).join(" ") || firstName;
 
-      const res  = await fetch("/api/orders", {
+      const res = await fetch("/api/orders", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -217,6 +261,7 @@ export default function InlineOrderForm({ product, selectedColor, packColors }: 
         address:  form.address.trim(),
         product:  product.title,
         size:     selectedSize || "",
+        colors:   buildColorsParam(),
         qty:      String(quantity),
         total:    String(total),
       });
@@ -227,14 +272,11 @@ export default function InlineOrderForm({ product, selectedColor, packColors }: 
     }
   };
 
-  // ── اطلب عبر واتساب — DIRECT, no validation, no API call ─────────────────
-  // Opens WhatsApp immediately with product details.
-  // Form fields are optional — included in the message if already filled.
+  // اطلب عبر واتساب — DIRECT, no validation, no API call
   const submitWhatsApp = () => {
     console.log("[WhatsApp Order] Direct WhatsApp clicked");
 
     const phoneNumber = siteConfig.whatsappNumber;
-
     const message = buildDirectWhatsAppMessage({
       product,
       selectedSize,
@@ -247,7 +289,6 @@ export default function InlineOrderForm({ product, selectedColor, packColors }: 
       address: form.address.trim()    || undefined,
     });
 
-    // Fire Contact tracking event (non-blocking — never prevents WhatsApp from opening)
     try { fbqContact(); } catch { /* ignore */ }
 
     openWhatsApp(phoneNumber, message);
@@ -259,9 +300,14 @@ export default function InlineOrderForm({ product, selectedColor, packColors }: 
 
   return (
     <div className="mt-6 pt-6 border-t border-gray-100 space-y-4">
-      <h3 className="font-black text-brand-navy text-base">أكمل الطلب</h3>
 
-      {/* ── المقاس ── */}
+      {/* Title + helper */}
+      <div>
+        <h3 className="font-black text-brand-navy text-lg">كمّل طلبك فـ 30 ثانية</h3>
+        <p className="text-xs text-brand-gray mt-0.5">الدفع عند الاستلام والتأكيد عبر الهاتف</p>
+      </div>
+
+      {/* المقاس */}
       {safeSizes.length > 0 && (
         <div>
           <label className={lbl}>المقاس</label>
@@ -285,13 +331,67 @@ export default function InlineOrderForm({ product, selectedColor, packColors }: 
         </div>
       )}
 
-      {/* الاسم الكامل */}
+      {/* اللون — non-pack single color selector */}
+      {!isPack && hasColors && (
+        <div>
+          <p className="font-bold text-brand-navy text-sm mb-2">
+            اللون{selectedColor ? `: ${selectedColor.label}` : ""}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {safeColors.map((color) => (
+              <button
+                key={color.name}
+                type="button"
+                onClick={() => { setSelectedColor(color); setColorError(""); }}
+                title={color.label}
+                className={`flex items-center gap-1.5 px-3 py-2 border text-sm font-medium transition-all rounded-sm ${
+                  selectedColor?.name === color.name
+                    ? "border-brand-navy bg-brand-navy text-white"
+                    : "border-gray-300 text-brand-navy hover:border-brand-navy"
+                }`}
+              >
+                <span
+                  className="w-4 h-4 rounded-full border border-white/50 shadow-sm"
+                  style={{ backgroundColor: color.hex }}
+                />
+                {color.label}
+              </button>
+            ))}
+          </div>
+          {colorError && <p className={errCls}>{colorError}</p>}
+        </div>
+      )}
+
+      {/* اللون — pack multi-color selector */}
+      {isPack && hasColors && (
+        <div>
+          <p className="font-bold text-brand-navy text-sm mb-2">
+            {chosenPackCount > 0
+              ? `اخترت ${chosenPackCount} من ${safePieces} ألوان`
+              : "اختر لون كل قطعة"}
+          </p>
+          <PackColorSelector
+            pieces={safePieces}
+            colors={safeColors}
+            selected={packColors}
+            onChange={(i, c) => {
+              const updated = [...packColors];
+              updated[i] = c;
+              setPackColors(updated);
+              if (colorError) setColorError("");
+            }}
+            error={colorError || undefined}
+          />
+        </div>
+      )}
+
+      {/* الاسم ديالك */}
       <div>
-        <label className={lbl}>الاسم الكامل *</label>
+        <label className={lbl}>الاسم ديالك *</label>
         <input
           type="text"
           className={inp}
-          placeholder="مثال: محمد أمين"
+          placeholder="مثال: فاطمة"
           value={form.full_name}
           onChange={(e) => { set("full_name", e.target.value); clearErr("full_name"); }}
         />
@@ -304,7 +404,7 @@ export default function InlineOrderForm({ product, selectedColor, packColors }: 
         <input
           type="tel"
           className={inp}
-          placeholder="06XXXXXXXX أو +212XXXXXXXXX"
+          placeholder="مثال: 0660000000"
           dir="ltr"
           value={form.phone}
           onChange={(e) => { set("phone", e.target.value); clearErr("phone"); }}
@@ -312,20 +412,20 @@ export default function InlineOrderForm({ product, selectedColor, packColors }: 
         {fieldErrors.phone && <p className={errCls}>{fieldErrors.phone}</p>}
       </div>
 
-      {/* العنوان الكامل */}
+      {/* المدينة والعنوان */}
       <div>
-        <label className={lbl}>العنوان الكامل *</label>
+        <label className={lbl}>المدينة والعنوان *</label>
         <textarea
           className={inp + " resize-none"}
           rows={2}
-          placeholder="المدينة، الحي، الشارع، رقم الدار..."
+          placeholder="مثال: الدار البيضاء، سباتة، قرب المسجد"
           value={form.address}
           onChange={(e) => { set("address", e.target.value); clearErr("address"); }}
         />
         {fieldErrors.address && <p className={errCls}>{fieldErrors.address}</p>}
       </div>
 
-      {/* Total */}
+      {/* المجموع الكلي */}
       <div className="bg-brand-light p-3 flex items-center justify-between rounded-sm">
         <span className="text-sm text-brand-gray">المجموع الكلي</span>
         <span className="font-black text-brand-navy text-lg">{formatPrice(total)}</span>
@@ -333,7 +433,7 @@ export default function InlineOrderForm({ product, selectedColor, packColors }: 
 
       {/* Buttons */}
       <div className="flex flex-col gap-3 pt-1">
-        {/* اشترِ الآن — validates + creates order */}
+        {/* اشترِ الآن */}
         <button
           type="button"
           onClick={submitCod}
@@ -343,6 +443,9 @@ export default function InlineOrderForm({ product, selectedColor, packColors }: 
           {submittingCod ? <Loader2 className="h-5 w-5 animate-spin" /> : <ShoppingBag className="h-5 w-5" />}
           {submittingCod ? "كيتم التسجيل..." : "اشترِ الآن"}
         </button>
+
+        {/* WhatsApp section */}
+        <p className="text-xs text-center text-brand-gray">ما عرفتيش تعمر الطلب؟</p>
 
         {/* اطلب عبر واتساب — opens WhatsApp directly, no validation */}
         <button
