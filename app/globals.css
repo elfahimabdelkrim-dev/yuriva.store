@@ -179,3 +179,15 @@ body {
     animation: none;
   }
 }
+
+/* ── Checkout title subtle glow ── */
+@keyframes checkout-title-glow {
+  0%, 100% { text-shadow: 0 0 0px transparent; }
+  50%       { text-shadow: 0 0 14px rgba(255, 255, 255, 0.25), 0 0 4px rgba(255, 255, 255, 0.12); }
+}
+.animate-checkout-title-glow {
+  animation: checkout-title-glow 3s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-checkout-title-glow { animation: none; }
+}

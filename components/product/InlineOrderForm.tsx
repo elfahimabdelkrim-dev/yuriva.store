@@ -263,21 +263,21 @@ export default function InlineOrderForm({ product }: Props) {
     openWhatsApp(phoneNumber, message);
   };
 
-  const inp    = "w-full border border-gray-300 focus:border-brand-navy px-3 py-2.5 text-sm outline-none transition-colors rounded-lg";
-  const lbl    = "block text-sm font-bold text-brand-navy mb-1";
-  const errCls = "text-red-500 text-xs mt-1";
+  const inp    = "w-full bg-white/10 border border-white/20 focus:border-white/50 px-3 py-2.5 text-sm text-white placeholder-white/40 outline-none transition-colors rounded-lg";
+  const lbl    = "block text-sm font-semibold text-white/80 mb-1";
+  const errCls = "text-red-400 text-xs mt-1";
 
   return (
-    <div className="mt-6 bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+    <div className="mt-6 bg-[#0f172a] border border-white/10 rounded-2xl shadow-xl overflow-hidden">
 
       {/* Card header */}
-      <div className="px-5 pt-5 pb-4 border-b border-gray-100 text-center">
-        <h3 className="font-black text-brand-navy text-xl leading-snug">كمّل طلبك فـ 30 ثانية</h3>
-        <p className="text-xs text-brand-gray mt-1">الدفع عند الاستلام والتأكيد عبر الهاتف</p>
+      <div className="px-5 pt-6 pb-5 border-b border-white/10 text-center">
+        <h3 className="animate-checkout-title-glow font-black text-white text-2xl leading-snug tracking-tight">كمّل طلبك فـ 30 ثانية</h3>
+        <p className="text-xs text-white/50 mt-2 tracking-wide">الدفع عند الاستلام والتأكيد عبر الهاتف</p>
       </div>
 
       {/* Form fields */}
-      <div className="px-5 py-5 space-y-4">
+      <div className="px-5 py-5 space-y-4 bg-[#0f172a]">
 
         {/* المقاس */}
         {safeSizes.length > 0 && (
@@ -291,8 +291,8 @@ export default function InlineOrderForm({ product }: Props) {
                   onClick={() => { setSelectedSize(s); setSizeError(""); }}
                   className={`px-4 py-2 border text-sm font-bold transition-all rounded-lg ${
                     selectedSize === s
-                      ? "bg-brand-navy text-white border-brand-navy"
-                      : "border-gray-300 text-brand-navy hover:border-brand-navy"
+                      ? "bg-white text-[#0f172a] border-white"
+                      : "border-white/20 text-white/70 hover:border-white/50 hover:text-white"
                   }`}
                 >
                   {s}
@@ -306,7 +306,7 @@ export default function InlineOrderForm({ product }: Props) {
         {/* اللون — non-pack */}
         {!isPack && hasColors && (
           <div>
-            <p className="font-bold text-brand-navy text-sm mb-2">
+            <p className="font-semibold text-white/80 text-sm mb-2">
               اللون{selectedColor ? `: ${selectedColor.label}` : ""}
             </p>
             <div className="flex flex-wrap gap-2">
@@ -318,8 +318,8 @@ export default function InlineOrderForm({ product }: Props) {
                   title={color.label}
                   className={`flex items-center gap-1.5 px-3 py-2 border text-sm font-medium transition-all rounded-lg ${
                     selectedColor?.name === color.name
-                      ? "border-brand-navy bg-brand-navy text-white"
-                      : "border-gray-300 text-brand-navy hover:border-brand-navy"
+                      ? "border-white bg-white text-[#0f172a]"
+                      : "border-white/20 text-white/70 hover:border-white/50 hover:text-white"
                   }`}
                 >
                   <span
@@ -337,7 +337,7 @@ export default function InlineOrderForm({ product }: Props) {
         {/* اللون — pack */}
         {isPack && hasColors && (
           <div>
-            <p className="font-bold text-brand-navy text-sm mb-2">
+            <p className="font-semibold text-white/80 text-sm mb-2">
               {chosenPackCount > 0
                 ? `اخترت ${chosenPackCount} من ${safePieces} ألوان`
                 : "اختر لون كل قطعة"}
@@ -398,9 +398,9 @@ export default function InlineOrderForm({ product }: Props) {
         </div>
 
         {/* المجموع الكلي */}
-        <div className="bg-brand-light p-3 flex items-center justify-between rounded-xl">
-          <span className="text-sm text-brand-gray">المجموع الكلي</span>
-          <span className="font-black text-brand-navy text-lg">{formatPrice(total)}</span>
+        <div className="bg-white/8 border border-white/15 p-3 flex items-center justify-between rounded-xl">
+          <span className="text-sm text-white/60">المجموع الكلي</span>
+          <span className="font-black text-white text-lg">{formatPrice(total)}</span>
         </div>
 
         {/* Buttons */}
@@ -415,13 +415,13 @@ export default function InlineOrderForm({ product }: Props) {
             {submittingCod ? "كيتم التسجيل..." : "اشترِ الآن"}
           </button>
 
-          <p className="text-xs text-center text-brand-gray">ما عرفتيش تعمر الطلب؟</p>
+          <p className="text-xs text-center text-white/40">ما عرفتيش تعمر الطلب؟</p>
 
           <button
             type="button"
             onClick={submitWhatsApp}
             disabled={submittingCod}
-            className="w-full border-2 border-[#25D366] text-brand-navy font-bold py-4 flex items-center justify-center gap-2 hover:bg-[#25D366] hover:text-white transition-all text-base disabled:opacity-60 rounded-xl"
+            className="w-full border-2 border-[#25D366] text-[#25D366] font-bold py-4 flex items-center justify-center gap-2 hover:bg-[#25D366] hover:text-white transition-all text-base disabled:opacity-60 rounded-xl"
           >
             <WhatsAppIcon className="h-5 w-5 text-[#25D366]" />
             اطلب عبر واتساب
