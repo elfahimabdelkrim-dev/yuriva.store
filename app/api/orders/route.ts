@@ -124,6 +124,10 @@ export async function POST(req: NextRequest) {
       (async (): Promise<CapiResultLocal> => {
         if (!canSendCapi) return { ok: true };
 
+        // Split customer name for CAPI Advanced Matching (fn/ln)
+        const rawName  = String(order.customer_first_name ?? "").trim();
+        const rawLast  = String(order.customer_last_name  ?? "").trim();
+
         console.log(
           "[Meta CAPI] Purchase send started",
           "order="        + newOrder.id,
@@ -133,6 +137,7 @@ export async function POST(req: NextRequest) {
           "has_fbp="      + !!(metaTracking.fbp),
           "has_fbc="      + !!(metaTracking.fbc),
           "has_phone="    + !!(order.phone),
+          "has_name="     + !!(rawName),
           "has_ip="       + !!(getClientIp(req))
         );
 
@@ -153,6 +158,8 @@ export async function POST(req: NextRequest) {
               productTitle:   firstItem?.product_title ?? "",
               numItems,
               phone:          order.phone,
+              firstName:      rawName  || undefined,
+              lastName:       rawLast  || undefined,
               city:           order.city,
               clientIp:       getClientIp(req),
               userAgent:      req.headers.get("user-agent") || undefined,
@@ -200,7 +207,8 @@ export async function POST(req: NextRequest) {
           "[Meta CAPI] Purchase accepted by Meta",
           "events_received=" + capi.eventsReceived,
           "fbtrace_id=" + (capi.fbtrace_id ?? "n/a"),
-          "order=" + newOrder.id
+          "order=" + newOrder.id,
+          "event_id=" + metaTracking.event_id
         );
       } else if (!capi.ok && capi.eventsReceived === 0) {
         // HTTP 200 but Meta rejected the event (e.g. duplicate, bad data)

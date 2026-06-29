@@ -4,7 +4,7 @@
 
 import crypto from "crypto";
 
-const GRAPH_API_VERSION = "v21.0";
+export const GRAPH_API_VERSION = "v21.0";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -36,6 +36,15 @@ function hashCity(city: string): string {
   return sha256(city.toLowerCase().replace(/\s+/g, "").trim());
 }
 
+/**
+ * Hash a name field for CAPI Advanced Matching.
+ * Meta spec: lowercase, strip leading/trailing whitespace, no special handling.
+ * Do NOT log the raw name value.
+ */
+function hashName(name: string): string {
+  return sha256(name.toLowerCase().trim());
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface CapiPurchaseParams {
@@ -52,6 +61,8 @@ export interface CapiPurchaseParams {
   numItems: number;
 
   phone?: string;
+  firstName?: string;
+  lastName?: string;
   city?: string;
   clientIp?: string;
   userAgent?: string;
@@ -74,24 +85,51 @@ export async function sendCapiPurchase(params: CapiPurchaseParams): Promise<Capi
   const {
     pixelId, accessToken, testEventCode,
     eventId, orderId, value, productId, productTitle, numItems,
-    phone, city, clientIp, userAgent, fbp, fbc, eventSourceUrl,
+    phone, firstName, lastName, city, clientIp, userAgent, fbp, fbc, eventSourceUrl,
   } = params;
 
   // event_time must be Unix seconds, not milliseconds
   const eventTime = Math.floor(Date.now() / 1000);
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://yuriva.store";
 
-  // Build user_data — hash PII, pass matching signals in clear
+  // Build user_data — hash all PII, pass matching signals in clear
   const userData: Record<string, string> = {};
+
+  // Phone (hashed)
   if (phone) {
     const hashed = hashPhone(phone);
     if (hashed) userData.ph = hashed;
   }
+
+  // Name (hashed) — fn = first name, ln = last name (Meta CAPI spec)
+  if (firstName) userData.fn = hashName(firstName);
+  if (lastName)  userData.ln = hashName(lastName);
+
+  // City (hashed)
   if (city) userData.ct = hashCity(city);
-  if (clientIp) userData.client_ip_address = clientIp;
-  if (userAgent) userData.client_user_agent = userAgent;
-  if (fbp) userData.fbp = fbp;
-  if (fbc) userData.fbc = fbc;
+
+  // Country — Morocco. Always include for better matching.
+  userData.country = sha256("ma");
+
+  // Client signals (clear — not PII)
+  if (clientIp)  userData.client_ip_address  = clientIp;
+  if (userAgent) userData.client_user_agent  = userAgent;
+  if (fbp)       userData.fbp = fbp;
+  if (fbc)       userData.fbc = fbc;
+
+  // Log user_data quality (never log raw values)
+  console.log(
+    "[Meta CAPI] user_data quality",
+    "has_ph="       + !!userData.ph,
+    "has_fn="       + !!userData.fn,
+    "has_ln="       + !!userData.ln,
+    "has_ct="       + !!userData.ct,
+    "has_country="  + !!userData.country,
+    "has_fbp="      + !!userData.fbp,
+    "has_fbc="      + !!userData.fbc,
+    "has_ip="       + !!userData.client_ip_address,
+    "has_ua="       + !!userData.client_user_agent
+  );
 
   const eventPayload: Record<string, unknown> = {
     event_name: "Purchase",
@@ -181,5 +219,3 @@ export async function sendCapiPurchase(params: CapiPurchaseParams): Promise<Capi
     return { ok: false, error: msg };
   }
 }
-
-export { GRAPH_API_VERSION };

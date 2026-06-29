@@ -5,7 +5,15 @@ import { Loader2, ShoppingBag } from "lucide-react";
 import type { Product, ProductColor } from "@/types";
 import { validateMoroccanPhone, formatPrice } from "@/lib/utils";
 import { siteConfig } from "@/config/site";
-import { fbqInitiateCheckout, fbqPurchase, fbqContact, getCookie } from "@/lib/meta-pixel";
+import {
+  fbqInitiateCheckout,
+  fbqPurchase,
+  fbqContact,
+  fbqAdvancedMatch,
+  markPurchaseFired,
+  isPurchaseFired,
+  getCookie,
+} from "@/lib/meta-pixel";
 import toast from "react-hot-toast";
 
 function WhatsAppIcon({ className = "h-5 w-5" }: { className?: string }) {
@@ -223,10 +231,25 @@ export default function InlineOrderForm({ product }: Props) {
         return;
       }
       const orderId = data.order_id ?? "";
-      fbqPurchase(
-        { id: product.id, title: product.title, price: product.price },
-        orderId, total, quantity, purchaseEventId
-      );
+
+      // ── Deduplication guard: never fire Purchase twice for the same event ──
+      if (isPurchaseFired(purchaseEventId)) {
+        console.warn("[Meta Pixel] Purchase already fired for eventId:", purchaseEventId, "— skipping");
+      } else {
+        // Advanced Matching: send user signals before Purchase so Meta can match
+        // browser event with CAPI event for deduplication
+        fbqAdvancedMatch(form.phone, firstName, lastName);
+
+        // Fire Purchase with the same eventId sent to CAPI
+        fbqPurchase(
+          { id: product.id, title: product.title, price: product.price },
+          orderId, total, quantity, purchaseEventId
+        );
+
+        // Mark as fired so re-renders / back-navigation don't double-fire
+        markPurchaseFired(purchaseEventId);
+      }
+
       const qs = new URLSearchParams({
         order_id: orderId,
         name:     form.full_name.trim(),
