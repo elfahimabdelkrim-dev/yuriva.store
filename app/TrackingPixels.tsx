@@ -53,6 +53,7 @@ fbq('track', 'PageView');
 console.log('[Meta Pixel] enabled: true');
 console.log('[Meta Pixel] ID last 4 digits: ${metaPixelId.slice(-4)}');
 console.log('[Meta Pixel] fbq exists after load:', typeof fbq === 'function');
+console.log('[Meta Pixel] PageView fired (initial load from TrackingPixels)');
         `}</Script>
       )}
 

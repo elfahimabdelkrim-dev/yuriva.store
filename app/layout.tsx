@@ -4,6 +4,8 @@ import "./globals.css";
 import { siteConfig } from "@/config/site";
 import { Toaster } from "react-hot-toast";
 import TrackingPixels from "./TrackingPixels";
+import PageViewTracker from "./PageViewTracker";
+import { Suspense } from "react";
 
 const notoKufi = Noto_Kufi_Arabic({
   subsets: ["arabic"],
@@ -60,10 +62,10 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const metaPixelId = process.env.NEXT_PUBLIC_META_PIXEL_ID;
+  const metaPixelId   = process.env.NEXT_PUBLIC_META_PIXEL_ID;
   const tiktokPixelId = process.env.NEXT_PUBLIC_TIKTOK_PIXEL_ID;
-  const gaId = process.env.NEXT_PUBLIC_GA_ID;
-  const gtmId = process.env.NEXT_PUBLIC_GTM_ID;
+  const gaId          = process.env.NEXT_PUBLIC_GA_ID;
+  const gtmId         = process.env.NEXT_PUBLIC_GTM_ID;
 
   return (
     <html lang="ar" dir="rtl" className={notoKufi.variable}>
@@ -79,6 +81,12 @@ export default function RootLayout({
           gaId={gaId}
           gtmId={gtmId}
         />
+        {/* PageViewTracker fires fbq PageView on every client-side route change (SPA navigation) */}
+        {metaPixelId && (
+          <Suspense fallback={null}>
+            <PageViewTracker />
+          </Suspense>
+        )}
         <Toaster
           position="top-center"
           toastOptions={{

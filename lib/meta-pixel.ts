@@ -38,6 +38,7 @@ export function fbqViewContent(product: ProductMeta) {
     value: product.price,
     currency: "MAD",
   });
+  console.log("[Meta Pixel] ViewContent fired", "product:", product.id, "price:", product.price);
 }
 
 /** Fire when the order modal opens (user initiates checkout) */
@@ -51,6 +52,7 @@ export function fbqInitiateCheckout(product: ProductMeta, quantity: number, size
     num_items: quantity,
     contents: [{ id: product.id, quantity, item_price: product.price, size: size ?? "" }],
   });
+  console.log("[Meta Pixel] InitiateCheckout fired", "product:", product.id, "qty:", quantity, "value:", product.price * quantity);
 }
 
 /** Fire after /api/orders returns success — use the SAME eventId sent to CAPI */
@@ -75,11 +77,13 @@ export function fbqPurchase(
     },
     { eventID: eventId }
   );
+  console.log("[Meta Pixel] Purchase fired", "orderId:", orderId, "value:", value, "eventId:", eventId);
 }
 
 /** Fire when WhatsApp opens after order is saved */
 export function fbqContact() {
   _fbq("track", "Contact");
+  console.log("[Meta Pixel] Contact fired");
 }
 
 /** Read a cookie value by name from document.cookie (client-only) */
