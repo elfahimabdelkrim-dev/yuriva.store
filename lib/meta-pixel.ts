@@ -3,6 +3,12 @@
 // Pixel is initialised by TrackingPixels.tsx (fbq("init") only).
 // PageViewTracker.tsx fires all PageViews (initial + route changes).
 
+import {
+  getTrackingCurrency,
+  convertToTrackingValue,
+  DISPLAY_CURRENCY,
+} from "@/lib/meta-tracking-currency";
+
 declare global {
   interface Window {
     fbq?: (...args: unknown[]) => void;
@@ -38,32 +44,50 @@ export interface ProductMeta {
 
 /** Fire on product detail page mount */
 export function fbqViewContent(product: ProductMeta) {
-  const value = safeValue(product.price);
+  const displayValue   = safeValue(product.price);
+  const trackingCur    = getTrackingCurrency();
+  const trackingValue  = convertToTrackingValue(displayValue);
   _fbq("track", "ViewContent", {
     content_ids:  [product.id],
     content_name: product.title,
     content_type: "product",
-    value,
-    currency:     "MAD",
+    value:        trackingValue,
+    currency:     trackingCur,
   });
-  console.log("[Meta Pixel] ViewContent fired", "product:", product.id, "price:", value);
+  console.log(
+    "[Meta Pixel] ViewContent fired",
+    "product:", product.id,
+    `trackingCurrency=${trackingCur}`,
+    `displayCurrency=${DISPLAY_CURRENCY}`,
+    `displayValue=${displayValue}`,
+    `trackingValue=${trackingValue}`
+  );
 }
 
 /** Fire when the order modal opens (user initiates checkout) */
 export function fbqInitiateCheckout(product: ProductMeta, quantity: number, size?: string) {
-  const unitPrice = safeValue(product.price);
-  const qty       = Math.max(1, Number(quantity) || 1);
-  const value     = unitPrice * qty;
+  const unitPrice      = safeValue(product.price);
+  const qty            = Math.max(1, Number(quantity) || 1);
+  const displayValue   = unitPrice * qty;
+  const trackingCur    = getTrackingCurrency();
+  const trackingValue  = convertToTrackingValue(displayValue);
   _fbq("track", "InitiateCheckout", {
     content_ids:  [product.id],
     content_name: product.title,
     content_type: "product",
-    value,
-    currency:     "MAD",
+    value:        trackingValue,
+    currency:     trackingCur,
     num_items:    qty,
-    contents:     [{ id: product.id, quantity: qty, item_price: unitPrice, size: size ?? "" }],
+    contents:     [{ id: product.id, quantity: qty, item_price: convertToTrackingValue(unitPrice), size: size ?? "" }],
   });
-  console.log("[Meta Pixel] InitiateCheckout fired", "product:", product.id, "qty:", qty, "value:", value);
+  console.log(
+    "[Meta Pixel] InitiateCheckout fired",
+    "product:", product.id, "qty:", qty,
+    `trackingCurrency=${trackingCur}`,
+    `displayCurrency=${DISPLAY_CURRENCY}`,
+    `displayValue=${displayValue}`,
+    `trackingValue=${trackingValue}`
+  );
 }
 
 /**
@@ -84,13 +108,15 @@ export function fbqPurchase(
   eventId: string
 ) {
   // Strict numeric coercion — never NaN, Infinity, string, or negative
-  const numericValue = Number(value);
-  const safeVal      = Number.isFinite(numericValue) && numericValue >= 0 ? numericValue : 0;
+  const numericValue  = Number(value);
+  const displayValue  = Number.isFinite(numericValue) && numericValue >= 0 ? numericValue : 0;
+  const trackingCur   = getTrackingCurrency();
+  const trackingValue = convertToTrackingValue(displayValue);
 
-  // Minimum valid Purchase payload — currency hardcoded, never from a variable
+  // Minimum valid Purchase payload — currency from config, never from UI/formatPrice
   const purchasePayload = {
-    value:        safeVal,          // number only
-    currency:     "MAD" as const,   // hardcoded — not from env/store/formatPrice
+    value:        trackingValue,    // number only — converted if USD
+    currency:     trackingCur,      // "MAD" or "USD" from env
     content_type: "product",
     content_ids:  [String(product.id || "")],
   };
@@ -105,18 +131,30 @@ export function fbqPurchase(
     "typeof customData.value":   typeof purchasePayload.value,
     "customData.currency":       purchasePayload.currency,
     eventID:                     eventId,
+    trackingCurrency:            trackingCur,
+    displayCurrency:             DISPLAY_CURRENCY,
+    displayValue,
+    trackingValue,
   });
 
   // Direct window.fbq call — no wrapper — 100% explicit about arguments
   if (typeof window !== "undefined" && typeof window.fbq === "function") {
     window.fbq("track", "Purchase", purchasePayload, dedupeOptions);
-    console.log("[Meta Pixel] Purchase fired orderId:", orderId, "value:", safeVal, "eventId:", eventId);
+    console.log(
+      "[Meta Pixel] Purchase fired",
+      "orderId:", orderId,
+      `trackingCurrency=${trackingCur}`,
+      `displayCurrency=${DISPLAY_CURRENCY}`,
+      `displayValue=${displayValue}`,
+      `trackingValue=${trackingValue}`,
+      "eventId:", eventId
+    );
   } else {
     console.warn("[Meta Pixel] Purchase NOT fired — fbq not available");
   }
 
-  // Suppress unused-parameter lint warning (orderId + quantity logged above)
-  void orderId; void quantity;
+  // Suppress unused-parameter lint warning
+  void quantity;
 }
 
 /**

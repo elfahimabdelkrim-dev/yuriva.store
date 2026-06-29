@@ -1,11 +1,17 @@
 import { NextResponse } from "next/server";
 import { GRAPH_API_VERSION } from "@/lib/meta-capi";
+import { getTrackingCurrency, convertToTrackingValue, DISPLAY_CURRENCY, MAD_TO_USD_RATE } from "@/lib/meta-tracking-currency";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const pixelId         = process.env.NEXT_PUBLIC_META_PIXEL_ID ?? null;
   const hasTestCode     = !!(process.env.META_TEST_EVENT_CODE);
+  const trackingCur     = getTrackingCurrency();
+
+  // Sample conversion for reference (199 MAD)
+  const sampleMAD = 199;
+  const sampleTracking = convertToTrackingValue(sampleMAD);
 
   return NextResponse.json({
     hasPixelId:        !!pixelId,
@@ -16,6 +22,19 @@ export async function GET() {
     nodeEnv:           process.env.NODE_ENV,
     apiVersion:        GRAPH_API_VERSION,
     capiMode:          hasTestCode ? "test_event_code_present" : "production",
+
+    // Currency configuration
+    currency: {
+      displayCurrency:  DISPLAY_CURRENCY,                      // always "MAD" — shown to customers
+      trackingCurrency: trackingCur,                           // "MAD" or "USD" — sent to Meta
+      conversionRate:   trackingCur === "USD" ? `1 USD = ${MAD_TO_USD_RATE} MAD` : "no conversion",
+      sampleConversion: `${sampleMAD} MAD → ${sampleTracking} ${trackingCur}`,
+      envVar:           "NEXT_PUBLIC_META_TRACKING_CURRENCY",
+      envValue:         process.env.NEXT_PUBLIC_META_TRACKING_CURRENCY || "(not set — defaulting to MAD)",
+      browserPixel:     trackingCur,
+      capi:             trackingCur,
+      consistent:       true, // browser + CAPI always use the same currency
+    },
 
     // Advanced Matching configuration status
     advancedMatching: {
@@ -49,7 +68,7 @@ export async function GET() {
       "4_capi_purchase":     "sendCapiPurchase fires (server, awaited)",
       "5_api_returns":       "order_id received",
       "6_advanced_match":    "fbqAdvancedMatch fires (browser — updates user signals)",
-      "7_browser_purchase":  "fbqPurchase fires (browser, eventID=purchaseEventId)",
+      "7_browser_purchase":  `fbqPurchase fires (browser, currency=${trackingCur}, eventID=purchaseEventId)`,
       "8_mark_fired":        "markPurchaseFired(purchaseEventId) in sessionStorage",
       "9_redirect":          "router.push(/thank-you)",
     },

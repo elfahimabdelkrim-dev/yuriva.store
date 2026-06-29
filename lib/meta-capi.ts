@@ -3,6 +3,7 @@
 // Never import in client components. Never log or return the access token.
 
 import crypto from "crypto";
+import { getTrackingCurrency, convertToTrackingValue } from "@/lib/meta-tracking-currency";
 
 export const GRAPH_API_VERSION = "v21.0";
 
@@ -139,13 +140,13 @@ export async function sendCapiPurchase(params: CapiPurchaseParams): Promise<Capi
     event_source_url: eventSourceUrl || siteUrl,
     user_data: userData,
     custom_data: {
-      currency: "MAD",
-      value,
-      content_ids: [productId],
-      content_name: productTitle,
-      content_type: "product",
-      num_items: numItems,
-      order_id: orderId,
+      currency:      getTrackingCurrency(),    // "MAD" or "USD" from NEXT_PUBLIC_META_TRACKING_CURRENCY
+      value:         convertToTrackingValue(value), // converted if USD, unchanged if MAD
+      content_ids:   [productId],
+      content_name:  productTitle,
+      content_type:  "product",
+      num_items:     numItems,
+      order_id:      orderId,
     },
   };
 
