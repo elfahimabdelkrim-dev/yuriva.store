@@ -1,6 +1,6 @@
 // lib/meta-pixel.ts — CLIENT-SIDE ONLY
 // Safe wrapper around window.fbq — never import in server components.
-// The pixel is initialised by TrackingPixels.tsx (fbq('init') only).
+// Pixel is initialised by TrackingPixels.tsx (fbq("init") only).
 // PageViewTracker.tsx fires all PageViews (initial + route changes).
 
 declare global {
@@ -25,7 +25,7 @@ function _fbq(type: string, event: string, params?: object, options?: object) {
 /** Ensure value is always a finite number >= 0 (Meta rejects NaN / strings) */
 function safeValue(v: unknown): number {
   const n = Number(v);
-  return isFinite(n) && n >= 0 ? n : 0;
+  return Number.isFinite(n) && n >= 0 ? n : 0;
 }
 
 // ── Events ──────────────────────────────────────────────────────────────────
@@ -66,7 +66,16 @@ export function fbqInitiateCheckout(product: ProductMeta, quantity: number, size
   console.log("[Meta Pixel] InitiateCheckout fired", "product:", product.id, "qty:", qty, "value:", value);
 }
 
-/** Fire after /api/orders returns success — use the SAME eventId sent to CAPI */
+/**
+ * Fire after /api/orders returns success.
+ * Uses the SAME eventId sent to CAPI for deduplication.
+ *
+ * Payload is intentionally minimal — only the 4 fields Meta requires for Purchase.
+ * Extra fields (order_id, num_items, content_name) are excluded because any
+ * undefined/invalid field can trigger Meta's "currency is invalid" validation error.
+ *
+ * 4th argument is ONLY { eventID } — no other properties.
+ */
 export function fbqPurchase(
   product: ProductMeta,
   orderId: string,
@@ -74,27 +83,44 @@ export function fbqPurchase(
   quantity: number,
   eventId: string
 ) {
-  const safeVal = safeValue(value);
-  const safeQty = Math.max(1, Number(quantity) || 1);
-  _fbq(
-    "track",
-    "Purchase",
-    {
-      content_ids:  [product.id],
-      content_name: product.title,
-      content_type: "product",
-      value:        safeVal,
-      currency:     "MAD",
-      num_items:    safeQty,
-      order_id:     orderId,
-    },
-    { eventID: eventId }   // 4th arg — deduplication with CAPI event_id
-  );
-  console.log("[Meta Pixel] Purchase fired", "orderId:", orderId, "value:", safeVal, "eventId:", eventId);
+  // Strict numeric coercion — never NaN, Infinity, string, or negative
+  const numericValue = Number(value);
+  const safeVal      = Number.isFinite(numericValue) && numericValue >= 0 ? numericValue : 0;
+
+  // Minimum valid Purchase payload — currency hardcoded, never from a variable
+  const purchasePayload = {
+    value:        safeVal,          // number only
+    currency:     "MAD" as const,   // hardcoded — not from env/store/formatPrice
+    content_type: "product",
+    content_ids:  [String(product.id || "")],
+  };
+
+  // 4th arg: ONLY eventID for CAPI deduplication — no other properties
+  const dedupeOptions = { eventID: eventId };
+
+  // RAW diagnostic log — shows exact payload before the real fbq call
+  console.log("[Meta Pixel] RAW Purchase payload before fbq", {
+    customData:                  purchasePayload,
+    options:                     dedupeOptions,
+    "typeof customData.value":   typeof purchasePayload.value,
+    "customData.currency":       purchasePayload.currency,
+    eventID:                     eventId,
+  });
+
+  // Direct window.fbq call — no wrapper — 100% explicit about arguments
+  if (typeof window !== "undefined" && typeof window.fbq === "function") {
+    window.fbq("track", "Purchase", purchasePayload, dedupeOptions);
+    console.log("[Meta Pixel] Purchase fired orderId:", orderId, "value:", safeVal, "eventId:", eventId);
+  } else {
+    console.warn("[Meta Pixel] Purchase NOT fired — fbq not available");
+  }
+
+  // Suppress unused-parameter lint warning (orderId + quantity logged above)
+  void orderId; void quantity;
 }
 
 /**
- * Advanced Matching — re-calls fbq('init') with user signals BEFORE firing Purchase.
+ * Advanced Matching — re-calls fbq("init") with user signals BEFORE firing Purchase.
  * Meta Pixel hashes these values client-side; we pass RAW values here.
  * Do NOT log raw phone, name, or other PII.
  */
