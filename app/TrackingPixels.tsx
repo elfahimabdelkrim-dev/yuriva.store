@@ -49,11 +49,10 @@ n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
 t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,
 document,'script','https://connect.facebook.net/en_US/fbevents.js');
 fbq('init', '${metaPixelId}');
-fbq('track', 'PageView');
+// PageView is fired by PageViewTracker (handles initial load + every SPA route change)
 console.log('[Meta Pixel] enabled: true');
 console.log('[Meta Pixel] ID last 4 digits: ${metaPixelId.slice(-4)}');
 console.log('[Meta Pixel] fbq exists after load:', typeof fbq === 'function');
-console.log('[Meta Pixel] PageView fired (initial load from TrackingPixels)');
         `}</Script>
       )}
 

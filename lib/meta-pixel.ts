@@ -1,6 +1,7 @@
 // lib/meta-pixel.ts — CLIENT-SIDE ONLY
 // Safe wrapper around window.fbq — never import in server components.
-// The pixel is already initialised by TrackingPixels.tsx (fbq('init') + PageView).
+// The pixel is initialised by TrackingPixels.tsx (fbq('init') only).
+// PageViewTracker.tsx fires all PageViews (initial + route changes).
 
 declare global {
   interface Window {
@@ -21,6 +22,12 @@ function _fbq(type: string, event: string, params?: object, options?: object) {
   }
 }
 
+/** Ensure value is always a finite number >= 0 (Meta rejects NaN / strings) */
+function safeValue(v: unknown): number {
+  const n = Number(v);
+  return isFinite(n) && n >= 0 ? n : 0;
+}
+
 // ── Events ──────────────────────────────────────────────────────────────────
 
 export interface ProductMeta {
@@ -31,28 +38,32 @@ export interface ProductMeta {
 
 /** Fire on product detail page mount */
 export function fbqViewContent(product: ProductMeta) {
+  const value = safeValue(product.price);
   _fbq("track", "ViewContent", {
-    content_ids: [product.id],
+    content_ids:  [product.id],
     content_name: product.title,
     content_type: "product",
-    value: product.price,
-    currency: "MAD",
+    value,
+    currency:     "MAD",
   });
-  console.log("[Meta Pixel] ViewContent fired", "product:", product.id, "price:", product.price);
+  console.log("[Meta Pixel] ViewContent fired", "product:", product.id, "price:", value);
 }
 
 /** Fire when the order modal opens (user initiates checkout) */
 export function fbqInitiateCheckout(product: ProductMeta, quantity: number, size?: string) {
+  const unitPrice = safeValue(product.price);
+  const qty       = Math.max(1, Number(quantity) || 1);
+  const value     = unitPrice * qty;
   _fbq("track", "InitiateCheckout", {
-    content_ids: [product.id],
+    content_ids:  [product.id],
     content_name: product.title,
     content_type: "product",
-    value: product.price * quantity,
-    currency: "MAD",
-    num_items: quantity,
-    contents: [{ id: product.id, quantity, item_price: product.price, size: size ?? "" }],
+    value,
+    currency:     "MAD",
+    num_items:    qty,
+    contents:     [{ id: product.id, quantity: qty, item_price: unitPrice, size: size ?? "" }],
   });
-  console.log("[Meta Pixel] InitiateCheckout fired", "product:", product.id, "qty:", quantity, "value:", product.price * quantity);
+  console.log("[Meta Pixel] InitiateCheckout fired", "product:", product.id, "qty:", qty, "value:", value);
 }
 
 /** Fire after /api/orders returns success — use the SAME eventId sent to CAPI */
@@ -63,29 +74,29 @@ export function fbqPurchase(
   quantity: number,
   eventId: string
 ) {
+  const safeVal = safeValue(value);
+  const safeQty = Math.max(1, Number(quantity) || 1);
   _fbq(
     "track",
     "Purchase",
     {
-      content_ids: [product.id],
+      content_ids:  [product.id],
       content_name: product.title,
       content_type: "product",
-      value,
-      currency: "MAD",
-      num_items: quantity,
-      order_id: orderId,
+      value:        safeVal,
+      currency:     "MAD",
+      num_items:    safeQty,
+      order_id:     orderId,
     },
-    { eventID: eventId }
+    { eventID: eventId }   // 4th arg — deduplication with CAPI event_id
   );
-  console.log("[Meta Pixel] Purchase fired", "orderId:", orderId, "value:", value, "eventId:", eventId);
+  console.log("[Meta Pixel] Purchase fired", "orderId:", orderId, "value:", safeVal, "eventId:", eventId);
 }
 
 /**
  * Advanced Matching — re-calls fbq('init') with user signals BEFORE firing Purchase.
  * Meta Pixel hashes these values client-side; we pass RAW values here.
  * Do NOT log raw phone, name, or other PII.
- *
- * Call this right before fbqPurchase, after order succeeds.
  */
 export function fbqAdvancedMatch(rawPhone: string, firstName: string, lastName: string) {
   const pixelId = process.env.NEXT_PUBLIC_META_PIXEL_ID;
@@ -97,9 +108,9 @@ export function fbqAdvancedMatch(rawPhone: string, firstName: string, lastName: 
   else if (!phone.startsWith("212")) phone = "212" + phone;
 
   const matchData: Record<string, string> = { country: "ma" };
-  if (phone.length >= 10) matchData.ph = phone;
-  if (firstName.trim()) matchData.fn = firstName.toLowerCase().trim();
-  if (lastName.trim())  matchData.ln = lastName.toLowerCase().trim();
+  if (phone.length >= 10)  matchData.ph = phone;
+  if (firstName.trim())    matchData.fn = firstName.toLowerCase().trim();
+  if (lastName.trim())     matchData.ln = lastName.toLowerCase().trim();
 
   // Re-init with advanced matching data — Meta merges user signals on re-init
   window.fbq("init", pixelId, matchData);
