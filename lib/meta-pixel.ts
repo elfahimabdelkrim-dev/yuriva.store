@@ -163,8 +163,15 @@ export function fbqPurchase(
  * Do NOT log raw phone, name, or other PII.
  */
 export function fbqAdvancedMatch(rawPhone: string, firstName: string, lastName: string) {
-  const pixelId = process.env.NEXT_PUBLIC_META_PIXEL_ID;
-  if (!pixelId || typeof window === "undefined" || typeof window.fbq !== "function") return;
+  if (typeof window === "undefined" || typeof window.fbq !== "function") return;
+
+  // Collect all active pixel IDs (both primary and secondary)
+  const pixelIds = [
+    process.env.NEXT_PUBLIC_META_PIXEL_ID,
+    process.env.NEXT_PUBLIC_META_PIXEL_ID_2,
+  ].filter(Boolean) as string[];
+
+  if (pixelIds.length === 0) return;
 
   // Normalise phone to Meta format: digits only with country code, no +
   let phone = rawPhone.replace(/\D/g, "");
@@ -176,12 +183,14 @@ export function fbqAdvancedMatch(rawPhone: string, firstName: string, lastName: 
   if (firstName.trim())    matchData.fn = firstName.toLowerCase().trim();
   if (lastName.trim())     matchData.ln = lastName.toLowerCase().trim();
 
-  // Re-init with advanced matching data — Meta merges user signals on re-init
-  window.fbq("init", pixelId, matchData);
+  // Re-init EACH pixel with advanced matching — Meta merges user signals on re-init
+  for (const id of pixelIds) {
+    window.fbq("init", id, matchData);
+  }
 
   // Log capability only — never log raw values
   console.log(
-    "[Meta Pixel] Advanced Matching applied:",
+    "[Meta Pixel] Advanced Matching applied to", pixelIds.length, "pixel(s):",
     "has_ph=", !!(matchData.ph),
     "has_fn=", !!(matchData.fn),
     "has_ln=", !!(matchData.ln),

@@ -3,6 +3,7 @@ import Script from "next/script";
 
 interface TrackingPixelsProps {
   metaPixelId?: string;
+  metaPixelId2?: string;
   tiktokPixelId?: string;
   gaId?: string;
   gtmId?: string;
@@ -10,10 +11,20 @@ interface TrackingPixelsProps {
 
 export default function TrackingPixels({
   metaPixelId,
+  metaPixelId2,
   tiktokPixelId,
   gaId,
   gtmId,
 }: TrackingPixelsProps) {
+  // Build the Meta fbq init block dynamically so both pixels are inited in one
+  // <Script> tag — Meta docs recommend all fbq("init") calls happen before any
+  // fbq("track") call. Events fired after this point go to ALL inited pixels.
+  const hasAnyMetaPixel = !!(metaPixelId || metaPixelId2);
+  const metaInitCalls = [metaPixelId, metaPixelId2]
+    .filter(Boolean)
+    .map((id) => `fbq('init', '${id}');`)
+    .join("\n");
+
   return (
     <>
       {/* Google Tag Manager */}
@@ -40,19 +51,17 @@ gtag('config', '${gaId}', { page_path: window.location.pathname });
         </>
       )}
 
-      {/* Meta Pixel — init + PageView + safe diagnostics */}
-      {metaPixelId && (
+      {/* Meta Pixel — init ALL active pixels, then defer PageView to PageViewTracker */}
+      {hasAnyMetaPixel && (
         <Script id="meta-pixel" strategy="afterInteractive">{`
 !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
 n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
 n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
 t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,
 document,'script','https://connect.facebook.net/en_US/fbevents.js');
-fbq('init', '${metaPixelId}');
+${metaInitCalls}
 // PageView is fired by PageViewTracker (handles initial load + every SPA route change)
-console.log('[Meta Pixel] enabled: true');
-console.log('[Meta Pixel] ID last 4 digits: ${metaPixelId.slice(-4)}');
-console.log('[Meta Pixel] fbq exists after load:', typeof fbq === 'function');
+console.log('[Meta Pixel] pixels inited: ${[metaPixelId, metaPixelId2].filter(Boolean).join(", ")}');
         `}</Script>
       )}
 

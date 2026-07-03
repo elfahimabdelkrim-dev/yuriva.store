@@ -62,10 +62,12 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const metaPixelId   = process.env.NEXT_PUBLIC_META_PIXEL_ID;
-  const tiktokPixelId = process.env.NEXT_PUBLIC_TIKTOK_PIXEL_ID;
-  const gaId          = process.env.NEXT_PUBLIC_GA_ID;
-  const gtmId         = process.env.NEXT_PUBLIC_GTM_ID;
+  const metaPixelId    = process.env.NEXT_PUBLIC_META_PIXEL_ID;
+  const metaPixelId2   = process.env.NEXT_PUBLIC_META_PIXEL_ID_2;
+  const tiktokPixelId  = process.env.NEXT_PUBLIC_TIKTOK_PIXEL_ID;
+  const gaId           = process.env.NEXT_PUBLIC_GA_ID;
+  const gtmId          = process.env.NEXT_PUBLIC_GTM_ID;
+  const hasMetaPixel   = !!(metaPixelId || metaPixelId2);
 
   return (
     <html lang="ar" dir="rtl" className={notoKufi.variable}>
@@ -77,12 +79,13 @@ export default function RootLayout({
       <body className="font-arabic antialiased">
         <TrackingPixels
           metaPixelId={metaPixelId}
+          metaPixelId2={metaPixelId2}
           tiktokPixelId={tiktokPixelId}
           gaId={gaId}
           gtmId={gtmId}
         />
         {/* PageViewTracker fires fbq PageView on every client-side route change (SPA navigation) */}
-        {metaPixelId && (
+        {hasMetaPixel && (
           <Suspense fallback={null}>
             <PageViewTracker />
           </Suspense>
