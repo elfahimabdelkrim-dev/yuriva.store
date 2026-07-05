@@ -42,7 +42,7 @@ export const metadata: Metadata = {
         url: `${siteConfig.url}/images/og-default.jpg`,
         width: 1200,
         height: 630,
-        alt: "YURIVA — سراول Para وShorts الرجالية",
+        alt: "YURIVA",
       },
     ],
   },
@@ -57,17 +57,48 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+/**
+ * Fetches active Meta pixel IDs from the DB (tracking_pixels table).
+ * Falls back to NEXT_PUBLIC_ env vars when DB is not configured or returns 0 rows.
+ * Results are NOT cached — each request gets fresh data so admin changes
+ * take effect on the next page load without a rebuild.
+ */
+async function getActiveMetaPixelIds(): Promise<string[]> {
+  const envFallback = [
+    process.env.NEXT_PUBLIC_META_PIXEL_ID,
+    process.env.NEXT_PUBLIC_META_PIXEL_ID_2,
+  ].filter(Boolean) as string[];
+
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return envFallback;
+
+  try {
+    const { createAdminClient } = await import("@/lib/supabase/server");
+    const sb = createAdminClient();
+    const { data, error } = await sb
+      .from("tracking_pixels")
+      .select("pixel_id")
+      .eq("provider", "meta")
+      .eq("is_active", true)
+      .order("created_at", { ascending: true });
+
+    if (error || !data || data.length === 0) return envFallback;
+
+    const ids = data.map((r: { pixel_id: string }) => r.pixel_id).filter(Boolean);
+    return ids.length > 0 ? ids : envFallback;
+  } catch {
+    return envFallback;
+  }
+}
+
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const metaPixelId    = process.env.NEXT_PUBLIC_META_PIXEL_ID;
-  const metaPixelId2   = process.env.NEXT_PUBLIC_META_PIXEL_ID_2;
-  const tiktokPixelId  = process.env.NEXT_PUBLIC_TIKTOK_PIXEL_ID;
-  const gaId           = process.env.NEXT_PUBLIC_GA_ID;
-  const gtmId          = process.env.NEXT_PUBLIC_GTM_ID;
-  const hasMetaPixel   = !!(metaPixelId || metaPixelId2);
+  const metaPixelIds  = await getActiveMetaPixelIds();
+  const tiktokPixelId = process.env.NEXT_PUBLIC_TIKTOK_PIXEL_ID;
+  const gaId          = process.env.NEXT_PUBLIC_GA_ID;
+  const gtmId         = process.env.NEXT_PUBLIC_GTM_ID;
 
   return (
     <html lang="ar" dir="rtl" className={notoKufi.variable}>
@@ -78,14 +109,13 @@ export default function RootLayout({
       </head>
       <body className="font-arabic antialiased">
         <TrackingPixels
-          metaPixelId={metaPixelId}
-          metaPixelId2={metaPixelId2}
+          pixelIds={metaPixelIds}
           tiktokPixelId={tiktokPixelId}
           gaId={gaId}
           gtmId={gtmId}
         />
-        {/* PageViewTracker fires fbq PageView on every client-side route change (SPA navigation) */}
-        {hasMetaPixel && (
+        {/* PageViewTracker fires fbq PageView on every route change */}
+        {metaPixelIds.length > 0 && (
           <Suspense fallback={null}>
             <PageViewTracker />
           </Suspense>

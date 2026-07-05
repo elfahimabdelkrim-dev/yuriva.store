@@ -165,11 +165,15 @@ export function fbqPurchase(
 export function fbqAdvancedMatch(rawPhone: string, firstName: string, lastName: string) {
   if (typeof window === "undefined" || typeof window.fbq !== "function") return;
 
-  // Collect all active pixel IDs (both primary and secondary)
-  const pixelIds = [
-    process.env.NEXT_PUBLIC_META_PIXEL_ID,
-    process.env.NEXT_PUBLIC_META_PIXEL_ID_2,
-  ].filter(Boolean) as string[];
+  // Prefer IDs stored by TrackingPixels.tsx at runtime (dynamic DB-loaded list).
+  // Fall back to env vars if the global hasn't been set yet.
+  const winIds = (window as unknown as Record<string, unknown>).__yuriva_pixel_ids;
+  const pixelIds: string[] = Array.isArray(winIds) && winIds.length > 0
+    ? (winIds as string[])
+    : [
+        process.env.NEXT_PUBLIC_META_PIXEL_ID,
+        process.env.NEXT_PUBLIC_META_PIXEL_ID_2,
+      ].filter(Boolean) as string[];
 
   if (pixelIds.length === 0) return;
 
