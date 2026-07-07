@@ -15,7 +15,10 @@ import {
   getCookie,
 } from "@/lib/meta-pixel";
 import toast from "react-hot-toast";
+import { buildOrderWhatsAppURL } from "@/lib/whatsapp";
+import type { WhatsAppOrderData } from "@/types";
 
+// ── WhatsApp icon ─────────────────────────────────────────────────────────────
 function WhatsAppIcon({ className = "h-5 w-5" }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden="true">
@@ -24,9 +27,8 @@ function WhatsAppIcon({ className = "h-5 w-5" }: { className?: string }) {
   );
 }
 
-interface Props {
-  product: Product;
-}
+// ── Interfaces ────────────────────────────────────────────────────────────────
+interface Props { product: Product; }
 
 interface FormState {
   full_name: string;
@@ -34,70 +36,57 @@ interface FormState {
   address:   string;
 }
 
-function buildDirectWhatsAppMessage(opts: {
-  product:        Product;
-  selectedSize:   string;
-  selectedColors: ProductColor[];
-  quantity:       number;
-  total:          number;
-  name?:          string;
-  phone?:         string;
-  address?:       string;
+interface WaFormState {
+  name:    string;
+  phone:   string;
+  size:    string;
+  address: string;
+}
+
+type WaErrors = Partial<Record<keyof WaFormState, string>>;
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+const DEFAULT_SIZES = ["S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
+
+// ── WhatsApp message builder ──────────────────────────────────────────────────
+// Used ONLY for the WhatsApp mini-form (not the COD confirmation).
+// Fires Contact + WhatsAppClick — NOT Purchase.
+function buildWaMessage(opts: {
+  name:        string;
+  phone:       string;
+  size:        string;
+  address:     string;
+  productName: string;
+  price:       number;
+  productUrl:  string;
 }): string {
-  const { product, selectedSize, selectedColors, quantity, total,
-          name, phone, address } = opts;
-
-  const productUrl = typeof window !== "undefined"
-    ? `${window.location.origin}/products/${product.slug}`
-    : `https://yuriva.store/products/${product.slug}`;
-
-  const colorLine = selectedColors.length > 1
-    ? selectedColors.map((c, i) => `${i + 1}: ${c.label}`).join("، ")
-    : selectedColors[0]?.label ?? "";
-
-  const lines_msg: string[] = [
-    "السلام عليكم، بغيت نطلب من YURIVA",
+  return [
+    "طلب جديد عبر واتساب من YURIVA ✅",
     "",
-    `*المنتج:* ${product.title}`,
-    `*الثمن:* ${total} درهم`,
-  ];
-  if (selectedSize) lines_msg.push(`*المقاس:* ${selectedSize}`);
-  if (colorLine)    lines_msg.push(`*اللون:* ${colorLine}`);
-  if (quantity > 1) lines_msg.push(`*الكمية:* ${quantity}`);
-  lines_msg.push(`*الرابط:* ${productUrl}`);
-
-  if (name || phone || address) {
-    lines_msg.push("", "---");
-    if (name)    lines_msg.push(`*الاسم:* ${name}`);
-    if (phone)   lines_msg.push(`*الهاتف:* ${phone}`);
-    if (address) lines_msg.push(`*العنوان:* ${address}`);
-  }
-
-  lines_msg.push("", "من فضلكم بغيت نأكد الطلب");
-  return lines_msg.join("\n");
+    "معلومات الزبون:",
+    `الاسم الكامل: ${opts.name}`,
+    `رقم الهاتف / واتساب: ${opts.phone}`,
+    `القياس: ${opts.size}`,
+    `العنوان: ${opts.address}`,
+    "",
+    "تفاصيل المنتوج:",
+    `المنتوج: ${opts.productName}`,
+    `الثمن: ${opts.price} درهم`,
+    `الرابط: ${opts.productUrl}`,
+    "",
+    "ملاحظة: الزبون عمر فورم واتساب وبغى نأكدو معاه الطلب بالهاتف.",
+  ].join("\n");
 }
 
-function openWhatsApp(phoneNumber: string, message: string): void {
-  const encoded  = encodeURIComponent(message);
-  const isMobile = typeof navigator !== "undefined" &&
-    /Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry/i.test(navigator.userAgent);
-  if (isMobile) {
-    console.log("[WhatsApp Order] Opening WhatsApp app directly");
-    window.location.href = `whatsapp://send?phone=${phoneNumber}&text=${encoded}`;
-  } else {
-    console.log("[WhatsApp Order] Opening WhatsApp web fallback");
-    window.open(`https://wa.me/${phoneNumber}?text=${encoded}`, "_blank");
-  }
-}
-
+// ── Component ─────────────────────────────────────────────────────────────────
 export default function InlineOrderForm({ product }: Props) {
   const router = useRouter();
 
+  // ── COD form state (unchanged) ────────────────────────────────────────────
   const [selectedSize, setSelectedSize] = useState("");
   const [sizeError,    setSizeError]    = useState("");
   const quantity = 1;
 
-  // Color state -- unified multi-select driven by required_color_count
   const safeColors = Array.isArray(product.colors) ? product.colors : [];
   const reqCount   = Math.max(1, Math.min(Number(product.required_color_count) || 1, 4));
   const hasColors  = safeColors.length > 0;
@@ -110,14 +99,36 @@ export default function InlineOrderForm({ product }: Props) {
 
   const set = (field: keyof FormState, value: string) =>
     setForm((f) => ({ ...f, [field]: value }));
-
   const clearErr = (field: keyof FormState) =>
     setFieldErrors((e) => ({ ...e, [field]: undefined }));
 
   const safeSizes = Array.isArray(product.sizes) ? product.sizes : [];
   const total     = product.price * quantity;
 
-  // Toggle a color on/off (up to reqCount)
+  // ── WhatsApp mini-form state (NEW) ────────────────────────────────────────
+  const [showWaForm,  setShowWaForm]  = useState(false);
+  const [waForm,      setWaForm]      = useState<WaFormState>({ name: "", phone: "", size: "", address: "" });
+  const [waErrors,    setWaErrors]    = useState<WaErrors>({});
+  const [waBackupUrl, setWaBackupUrl] = useState<string | null>(null);
+  const [waSubmitted, setWaSubmitted] = useState(false);
+
+  // Sizes for WA mini-form: product sizes if available, else full default list
+  const waSizes = safeSizes.length > 0 ? safeSizes : DEFAULT_SIZES;
+
+  const setWa = (field: keyof WaFormState, value: string) =>
+    setWaForm((f) => ({ ...f, [field]: value }));
+  const clearWaErr = (field: keyof WaFormState) =>
+    setWaErrors((e) => ({ ...e, [field]: undefined }));
+
+  // Reset the WA mini-form
+  const resetWaForm = () => {
+    setWaForm({ name: "", phone: "", size: "", address: "" });
+    setWaErrors({});
+    setWaBackupUrl(null);
+    setWaSubmitted(false);
+  };
+
+  // ── Color helpers ─────────────────────────────────────────────────────────
   const toggleColor = (color: ProductColor) => {
     setColorError("");
     const alreadySelected = selectedColors.some((c) => c.name === color.name);
@@ -125,11 +136,7 @@ export default function InlineOrderForm({ product }: Props) {
       setSelectedColors((prev) => prev.filter((c) => c.name !== color.name));
     } else {
       if (selectedColors.length >= reqCount) {
-        setColorError(
-          reqCount === 1
-            ? "اختار لون واحد فقط"
-            : `تقدر تختار غير ${reqCount} ألوان`
-        );
+        setColorError(reqCount === 1 ? "اختار لون واحد فقط" : `تقدر تختار غير ${reqCount} ألوان`);
         return;
       }
       setSelectedColors((prev) => [...prev, color]);
@@ -138,42 +145,33 @@ export default function InlineOrderForm({ product }: Props) {
 
   const buildColorsJson = (): string =>
     JSON.stringify(selectedColors.map((c, i) => ({ pieceIndex: i, color: c })));
-
   const buildColorsParam = (): string =>
     selectedColors.length > 1
       ? selectedColors.map((c, i) => `${i + 1}: ${c.label}`).join("، ")
       : selectedColors[0]?.label ?? "";
 
-  // Validation -- only for Buy Now button
+  // ── COD validation ────────────────────────────────────────────────────────
   const validate = (): boolean => {
     const errs: Partial<Record<keyof FormState, string>> = {};
     if (!form.full_name.trim()) errs.full_name = "الاسم ديالك مطلوب";
     if (!validateMoroccanPhone(form.phone)) errs.phone = "دخل رقم هاتف صحيح (06، 07، +212...)";
     if (!form.address.trim()) errs.address = "العنوان مطلوب";
-
     let sizeOk = true;
-    if (safeSizes.length > 0 && !selectedSize) {
-      setSizeError("خاصك تختار القياس");
-      sizeOk = false;
-    } else { setSizeError(""); }
-
+    if (safeSizes.length > 0 && !selectedSize) { setSizeError("خاصك تختار القياس"); sizeOk = false; }
+    else setSizeError("");
     let colorOk = true;
     if (hasColors && selectedColors.length < reqCount) {
-      setColorError(
-        reqCount === 1
-          ? "اختار اللون"
-          : `خاصك تختار ${reqCount} ألوان`
-      );
+      setColorError(reqCount === 1 ? "اختار اللون" : `خاصك تختار ${reqCount} ألوان`);
       colorOk = false;
-    } else {
-      setColorError("");
-    }
-
+    } else setColorError("");
     setFieldErrors(errs);
     return Object.keys(errs).length === 0 && sizeOk && colorOk;
   };
 
-  // Buy Now -- validates + creates order
+  // ── COD submit (Buy Now) — fires Purchase ─────────────────────────────────
+  // This is a real order: saved to Supabase, synced to Google Sheets,
+  // and fbqPurchase is fired (CAPI deduplication via purchaseEventId).
+  // WhatsApp opens afterwards as order CONFIRMATION only — not the trigger.
   const submitCod = async () => {
     if (!validate()) return;
     setSubmittingCod(true);
@@ -183,15 +181,14 @@ export default function InlineOrderForm({ product }: Props) {
     const eventSourceUrl = typeof window !== "undefined" ? window.location.href : "";
     fbqInitiateCheckout(
       { id: product.id, title: product.title, price: product.price },
-      quantity,
-      selectedSize || undefined
+      quantity, selectedSize || undefined
     );
     try {
       const nameParts = form.full_name.trim().split(/\s+/);
       const firstName = nameParts[0] ?? "";
       const lastName  = nameParts.slice(1).join(" ") || firstName;
       const res = await fetch("/api/orders", {
-        method:  "POST",
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           order: {
@@ -232,23 +229,51 @@ export default function InlineOrderForm({ product }: Props) {
       }
       const orderId = data.order_id ?? "";
 
-      // ── Deduplication guard: never fire Purchase twice for the same event ──
+      // COD Purchase event — dedup guard
       if (isPurchaseFired(purchaseEventId)) {
         console.warn("[Meta Pixel] Purchase already fired for eventId:", purchaseEventId, "— skipping");
       } else {
-        // Advanced Matching: send user signals before Purchase so Meta can match
-        // browser event with CAPI event for deduplication
         fbqAdvancedMatch(form.phone, firstName, lastName);
-
-        // Fire Purchase with the same eventId sent to CAPI
         fbqPurchase(
           { id: product.id, title: product.title, price: product.price },
           orderId, total, quantity, purchaseEventId
         );
-
-        // Mark as fired so re-renders / back-navigation don't double-fire
         markPurchaseFired(purchaseEventId);
       }
+
+      // WhatsApp opens for order CONFIRMATION (Purchase was already fired above)
+      const waData: WhatsAppOrderData = {
+        order_id:      orderId,
+        customer_name: form.full_name.trim(),
+        phone:         form.phone.trim(),
+        city:          "",
+        address:       form.address.trim(),
+        total,
+        delivery_price: 0,
+        items: [{
+          id:            orderId,
+          product_id:    product.id,
+          product_title: product.title,
+          product_slug:  product.slug,
+          product_image: "",
+          price:         product.price,
+          quantity,
+          size:          selectedSize,
+          color:         selectedColors[0] ?? undefined,
+          pack_colors:   selectedColors.length > 1
+                           ? selectedColors.map((c, i) => ({ pieceIndex: i, color: c }))
+                           : undefined,
+          is_pack:       selectedColors.length > 1,
+        }],
+      };
+      const waUrl = buildOrderWhatsAppURL(waData);
+      try { sessionStorage.setItem(`wa_order_${orderId}`, waUrl); } catch { /* ignore */ }
+
+      const isMobile = /Android|iPhone|iPad|iPod|Mobile|webOS/i.test(
+        typeof navigator !== "undefined" ? navigator.userAgent : ""
+      );
+      if (isMobile) { window.location.href = waUrl; }
+      else { window.open(waUrl, "_blank", "noopener,noreferrer"); }
 
       const qs = new URLSearchParams({
         order_id: orderId,
@@ -269,34 +294,77 @@ export default function InlineOrderForm({ product }: Props) {
     }
   };
 
-  // WhatsApp -- direct, no validation required
-  const submitWhatsApp = () => {
-    console.log("[WhatsApp Order] Direct WhatsApp clicked");
-    const phoneNumber = siteConfig.whatsappNumber;
-    const message = buildDirectWhatsAppMessage({
-      product, selectedSize, selectedColors, quantity, total,
-      name:    form.full_name.trim()  || undefined,
-      phone:   form.phone.trim()      || undefined,
-      address: form.address.trim()    || undefined,
+  // ── WhatsApp mini-form submit ──────────────────────────────────────────────
+  // Does NOT create a Supabase order — purely opens WhatsApp with customer info.
+  // Fires ONLY: fbq('track', 'Contact') + fbq('trackCustom', 'WhatsAppClick')
+  // Does NOT fire: fbq('track', 'Purchase')
+  const submitWa = () => {
+    const errs: WaErrors = {};
+    if (!waForm.name.trim())              errs.name    = "دخل الاسم الكامل";
+    if (!validateMoroccanPhone(waForm.phone)) errs.phone = "دخل رقم الهاتف اللي خدام فالاتصال";
+    if (!waForm.size)                     errs.size    = "اختار القياس";
+    if (!waForm.address.trim())           errs.address = "دخل العنوان الكامل";
+    setWaErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+
+    const productUrl =
+      typeof window !== "undefined"
+        ? `${window.location.origin}/products/${product.slug}`
+        : `https://yuriva.store/products/${product.slug}`;
+
+    const message = buildWaMessage({
+      name:        waForm.name.trim(),
+      phone:       waForm.phone.trim(),
+      size:        waForm.size,
+      address:     waForm.address.trim(),
+      productName: product.title,
+      price:       product.price,
+      productUrl,
     });
-    try { fbqContact(); } catch { /* ignore */ }
-    openWhatsApp(phoneNumber, message);
+
+    const waNumber = siteConfig.whatsappNumber || "212666648564";
+    const waUrl    = `https://wa.me/${waNumber}?text=${encodeURIComponent(message)}`;
+
+    // Tracking: Contact + WhatsAppClick — NO Purchase
+    try {
+      fbqContact();
+      if (typeof window !== "undefined" && typeof window.fbq === "function") {
+        window.fbq("trackCustom", "WhatsAppClick");
+      }
+    } catch { /* ignore */ }
+
+    // Store backup URL (shown if WhatsApp doesn't open)
+    setWaBackupUrl(waUrl);
+    setWaSubmitted(true);
+
+    // Open WhatsApp: app on mobile, wa.me in new tab on desktop
+    const isMobile = typeof navigator !== "undefined" &&
+      /Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry/i.test(navigator.userAgent);
+
+    if (isMobile) {
+      window.location.href = waUrl;
+    } else {
+      window.open(waUrl, "_blank", "noopener,noreferrer");
+    }
   };
 
+  // ── Style helpers ─────────────────────────────────────────────────────────
   const inp    = "w-full bg-white border border-gray-200 focus:border-brand-navy px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none transition-colors rounded-lg";
   const lbl    = "block text-sm font-semibold text-gray-700 mb-1";
   const errCls = "text-red-500 text-xs mt-1";
+  const waInp  = "w-full bg-white border border-[#25D366]/40 focus:border-[#25D366] px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none transition-colors rounded-lg";
+  const waLbl  = "block text-sm font-semibold text-gray-800 mb-1";
 
   return (
     <div className="mt-6 rounded-3xl bg-[#0f172a] p-[3px] shadow-xl">
 
-      {/* Card header */}
+      {/* ── Card header ─────────────────────────────────────────────────── */}
       <div className="bg-white rounded-t-[1.35rem] px-5 pt-5 pb-4 border-b border-gray-100 text-center">
         <h3 className="animate-checkout-title-glow font-black text-2xl leading-snug tracking-tight">كمّل طلبك فـ 30 ثانية</h3>
         <p className="text-xs text-gray-500 mt-1.5">الدفع عند الاستلام والتأكيد عبر الهاتف</p>
       </div>
 
-      {/* Form fields */}
+      {/* ── COD form body ────────────────────────────────────────────────── */}
       <div className="bg-white rounded-b-[1.35rem] px-5 py-5 space-y-4">
 
         {/* Price block */}
@@ -306,7 +374,7 @@ export default function InlineOrderForm({ product }: Props) {
           </span>
         </div>
 
-        {/* Size selector */}
+        {/* Size selector (COD) */}
         {safeSizes.length > 0 && (
           <div>
             <label className={lbl}>المقاس</label>
@@ -330,7 +398,7 @@ export default function InlineOrderForm({ product }: Props) {
           </div>
         )}
 
-        {/* Color selector -- unified for single and multi */}
+        {/* Color selector (COD) */}
         {hasColors && (
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -378,26 +446,26 @@ export default function InlineOrderForm({ product }: Props) {
           </div>
         )}
 
-        {/* Full name */}
+        {/* Full name (COD) */}
         <div>
-          <label className={lbl}>الاسم ديالك *</label>
+          <label className={lbl}>الاسم الكامل *</label>
           <input
             type="text"
             className={inp}
-            placeholder="مثال: فاطمة"
+            placeholder="مثال: فاطمة العلوي"
             value={form.full_name}
             onChange={(e) => { set("full_name", e.target.value); clearErr("full_name"); }}
           />
           {fieldErrors.full_name && <p className={errCls}>{fieldErrors.full_name}</p>}
         </div>
 
-        {/* Phone */}
+        {/* Phone (COD) */}
         <div>
-          <label className={lbl}>رقم الهاتف *</label>
+          <label className={lbl}>رقم الهاتف / واتساب *</label>
           <input
             type="tel"
             className={inp}
-            placeholder="مثال: 0660000000"
+            placeholder="مثال: 0612345678"
             dir="ltr"
             value={form.phone}
             onChange={(e) => { set("phone", e.target.value); clearErr("phone"); }}
@@ -405,7 +473,7 @@ export default function InlineOrderForm({ product }: Props) {
           {fieldErrors.phone && <p className={errCls}>{fieldErrors.phone}</p>}
         </div>
 
-        {/* Address */}
+        {/* City + address — ONE field (COD) */}
         <div>
           <label className={lbl}>المدينة والعنوان *</label>
           <textarea
@@ -418,8 +486,10 @@ export default function InlineOrderForm({ product }: Props) {
           {fieldErrors.address && <p className={errCls}>{fieldErrors.address}</p>}
         </div>
 
-        {/* Buttons */}
+        {/* ── Action buttons ────────────────────────────────────────────── */}
         <div className="flex flex-col gap-3 pt-1">
+
+          {/* Buy Now (COD) — fires Purchase for real orders */}
           <button
             type="button"
             onClick={submitCod}
@@ -432,17 +502,148 @@ export default function InlineOrderForm({ product }: Props) {
 
           <p className="text-xs text-center text-gray-400">ما عرفديتيش تعمر الطلب؟</p>
 
+          {/* WhatsApp button — shows mini-form, does NOT fire Purchase */}
           <button
             type="button"
-            onClick={submitWhatsApp}
+            onClick={() => { setShowWaForm(true); setWaBackupUrl(null); setWaSubmitted(false); }}
             disabled={submittingCod}
             className="w-full border-2 border-[#25D366] text-gray-800 font-bold py-4 flex items-center justify-center gap-2 hover:bg-[#25D366] hover:text-white transition-all text-base disabled:opacity-60 rounded-xl"
           >
             <WhatsAppIcon className="h-5 w-5 text-[#25D366]" />
             اطلب عبر واتساب
           </button>
-        </div>
 
+          {/* ── WhatsApp mini-form (appears after button click) ─────────── */}
+          {showWaForm && (
+            <div className="border-2 border-[#25D366]/50 rounded-2xl p-4 space-y-3 bg-[#f0fdf4]">
+
+              {/* Mini-form header */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <WhatsAppIcon className="h-4 w-4 text-[#25D366]" />
+                  <span className="text-sm font-black text-gray-900">
+                    فورم الطلب عبر واتساب
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setShowWaForm(false); resetWaForm(); }}
+                  className="text-xs text-gray-400 hover:text-gray-700 font-bold px-2 py-0.5 border border-gray-200 rounded bg-white"
+                >
+                  ✕ إلغاء
+                </button>
+              </div>
+
+              {/* Success state — show backup link after submit */}
+              {waSubmitted ? (
+                <div className="space-y-3 text-center">
+                  <p className="text-sm font-bold text-green-700">
+                    ✅ رسالتك جاهزة، كيفتح واتساب...
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    إذا ما فتحش واتساب تلقائياً، اضغط هنا:
+                  </p>
+                  {waBackupUrl && (
+                    <a
+                      href={waBackupUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full bg-[#25D366] text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 text-sm"
+                    >
+                      <WhatsAppIcon className="h-5 w-5 text-white" />
+                      فتح واتساب مباشرة
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => { setWaSubmitted(false); setWaBackupUrl(null); }}
+                    className="text-xs text-gray-400 hover:text-gray-600 underline"
+                  >
+                    تعديل البيانات
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {/* 1. Full name */}
+                  <div>
+                    <label className={waLbl}>الاسم الكامل *</label>
+                    <input
+                      type="text"
+                      className={waInp}
+                      placeholder="مثال: محمد العلوي"
+                      value={waForm.name}
+                      onChange={(e) => { setWa("name", e.target.value); clearWaErr("name"); }}
+                    />
+                    {waErrors.name && <p className={errCls}>{waErrors.name}</p>}
+                  </div>
+
+                  {/* 2. Phone */}
+                  <div>
+                    <label className={waLbl}>رقم الهاتف / واتساب *</label>
+                    <input
+                      type="tel"
+                      className={waInp}
+                      placeholder="مثال: 0612345678"
+                      dir="ltr"
+                      value={waForm.phone}
+                      onChange={(e) => { setWa("phone", e.target.value); clearWaErr("phone"); }}
+                    />
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      دخل الرقم اللي نقدر نتاصلو معاك فيه ونأكدو الطلب
+                    </p>
+                    {waErrors.phone && <p className={errCls}>{waErrors.phone}</p>}
+                  </div>
+
+                  {/* 3. Size */}
+                  <div>
+                    <label className={waLbl}>القياس *</label>
+                    <div className="flex flex-wrap gap-2">
+                      {waSizes.map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => { setWa("size", s); clearWaErr("size"); }}
+                          className={`px-3 py-1.5 border text-sm font-bold transition-all rounded-lg ${
+                            waForm.size === s
+                              ? "bg-[#25D366] text-white border-[#25D366]"
+                              : "border-gray-300 text-gray-700 hover:border-[#25D366] bg-white"
+                          }`}
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                    {waErrors.size && <p className={errCls}>{waErrors.size}</p>}
+                  </div>
+
+                  {/* 4. Address */}
+                  <div>
+                    <label className={waLbl}>العنوان الكامل *</label>
+                    <textarea
+                      className={waInp + " resize-none"}
+                      rows={2}
+                      placeholder="مثال: الدار البيضاء، حي السلام، زنقة 12، رقم 5"
+                      value={waForm.address}
+                      onChange={(e) => { setWa("address", e.target.value); clearWaErr("address"); }}
+                    />
+                    {waErrors.address && <p className={errCls}>{waErrors.address}</p>}
+                  </div>
+
+                  {/* Submit WhatsApp form — fires Contact+WhatsAppClick, NOT Purchase */}
+                  <button
+                    type="button"
+                    onClick={submitWa}
+                    className="w-full bg-[#25D366] text-white font-black py-3.5 flex items-center justify-center gap-2 hover:bg-[#1ebe5d] active:scale-95 transition-all text-base rounded-xl"
+                  >
+                    <WhatsAppIcon className="h-5 w-5 text-white" />
+                    أكمل الشراء
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+        </div>
       </div>
     </div>
   );
