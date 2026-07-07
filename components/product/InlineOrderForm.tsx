@@ -110,7 +110,6 @@ export default function InlineOrderForm({ product }: Props) {
   const [waForm,      setWaForm]      = useState<WaFormState>({ name: "", phone: "", size: "", address: "" });
   const [waErrors,    setWaErrors]    = useState<WaErrors>({});
   const [waBackupUrl, setWaBackupUrl] = useState<string | null>(null);
-  const [waSubmitted, setWaSubmitted] = useState(false);
 
   // Sizes for WA mini-form: product sizes if available, else full default list
   const waSizes = safeSizes.length > 0 ? safeSizes : DEFAULT_SIZES;
@@ -125,7 +124,6 @@ export default function InlineOrderForm({ product }: Props) {
     setWaForm({ name: "", phone: "", size: "", address: "" });
     setWaErrors({});
     setWaBackupUrl(null);
-    setWaSubmitted(false);
   };
 
   // ── Color helpers ─────────────────────────────────────────────────────────
@@ -333,18 +331,26 @@ export default function InlineOrderForm({ product }: Props) {
       }
     } catch { /* ignore */ }
 
-    // Store backup URL (shown if WhatsApp doesn't open)
-    setWaBackupUrl(waUrl);
-    setWaSubmitted(true);
-
-    // Open WhatsApp: app on mobile, wa.me in new tab on desktop
+    // Open WhatsApp directly — no success card shown.
+    // Mobile: navigate so the app opens. Desktop: new tab.
+    // If desktop popup is blocked, show a small fallback link.
     const isMobile = typeof navigator !== "undefined" &&
       /Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry/i.test(navigator.userAgent);
+
+    setWaBackupUrl(null); // clear any previous fallback
 
     if (isMobile) {
       window.location.href = waUrl;
     } else {
-      window.open(waUrl, "_blank", "noopener,noreferrer");
+      const opened = window.open(waUrl, "_blank", "noopener,noreferrer");
+      if (!opened) {
+        // Popup blocked — show a simple fallback link, keep form open
+        setWaBackupUrl(waUrl);
+      } else {
+        // Opened successfully — close mini-form
+        setShowWaForm(false);
+        resetWaForm();
+      }
     }
   };
 
@@ -505,7 +511,7 @@ export default function InlineOrderForm({ product }: Props) {
           {/* WhatsApp button — shows mini-form, does NOT fire Purchase */}
           <button
             type="button"
-            onClick={() => { setShowWaForm(true); setWaBackupUrl(null); setWaSubmitted(false); }}
+            onClick={() => { setShowWaForm(true); setWaBackupUrl(null); }}
             disabled={submittingCod}
             className="w-full border-2 border-[#25D366] text-gray-800 font-bold py-4 flex items-center justify-center gap-2 hover:bg-[#25D366] hover:text-white transition-all text-base disabled:opacity-60 rounded-xl"
           >
@@ -534,111 +540,91 @@ export default function InlineOrderForm({ product }: Props) {
                 </button>
               </div>
 
-              {/* Success state — show backup link after submit */}
-              {waSubmitted ? (
-                <div className="space-y-3 text-center">
-                  <p className="text-sm font-bold text-green-700">
-                    ✅ رسالتك جاهزة، كيفتح واتساب...
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    إذا ما فتحش واتساب تلقائياً، اضغط هنا:
-                  </p>
-                  {waBackupUrl && (
-                    <a
-                      href={waBackupUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full bg-[#25D366] text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 text-sm"
+              {/* 1. Full name */}
+              <div>
+                <label className={waLbl}>الاسم الكامل *</label>
+                <input
+                  type="text"
+                  className={waInp}
+                  placeholder="مثال: محمد العلوي"
+                  value={waForm.name}
+                  onChange={(e) => { setWa("name", e.target.value); clearWaErr("name"); }}
+                />
+                {waErrors.name && <p className={errCls}>{waErrors.name}</p>}
+              </div>
+
+              {/* 2. Phone */}
+              <div>
+                <label className={waLbl}>رقم الهاتف / واتساب *</label>
+                <input
+                  type="tel"
+                  className={waInp}
+                  placeholder="مثال: 0612345678"
+                  dir="ltr"
+                  value={waForm.phone}
+                  onChange={(e) => { setWa("phone", e.target.value); clearWaErr("phone"); }}
+                />
+                <p className="text-xs text-gray-500 mt-0.5">
+                  دخل الرقم اللي نقدر نتاصلو معاك فيه ونأكدو الطلب
+                </p>
+                {waErrors.phone && <p className={errCls}>{waErrors.phone}</p>}
+              </div>
+
+              {/* 3. Size */}
+              <div>
+                <label className={waLbl}>القياس *</label>
+                <div className="flex flex-wrap gap-2">
+                  {waSizes.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => { setWa("size", s); clearWaErr("size"); }}
+                      className={`px-3 py-1.5 border text-sm font-bold transition-all rounded-lg ${
+                        waForm.size === s
+                          ? "bg-[#25D366] text-white border-[#25D366]"
+                          : "border-gray-300 text-gray-700 hover:border-[#25D366] bg-white"
+                      }`}
                     >
-                      <WhatsAppIcon className="h-5 w-5 text-white" />
-                      فتح واتساب مباشرة
-                    </a>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => { setWaSubmitted(false); setWaBackupUrl(null); }}
-                    className="text-xs text-gray-400 hover:text-gray-600 underline"
-                  >
-                    تعديل البيانات
-                  </button>
+                      {s}
+                    </button>
+                  ))}
                 </div>
-              ) : (
-                <>
-                  {/* 1. Full name */}
-                  <div>
-                    <label className={waLbl}>الاسم الكامل *</label>
-                    <input
-                      type="text"
-                      className={waInp}
-                      placeholder="مثال: محمد العلوي"
-                      value={waForm.name}
-                      onChange={(e) => { setWa("name", e.target.value); clearWaErr("name"); }}
-                    />
-                    {waErrors.name && <p className={errCls}>{waErrors.name}</p>}
-                  </div>
+                {waErrors.size && <p className={errCls}>{waErrors.size}</p>}
+              </div>
 
-                  {/* 2. Phone */}
-                  <div>
-                    <label className={waLbl}>رقم الهاتف / واتساب *</label>
-                    <input
-                      type="tel"
-                      className={waInp}
-                      placeholder="مثال: 0612345678"
-                      dir="ltr"
-                      value={waForm.phone}
-                      onChange={(e) => { setWa("phone", e.target.value); clearWaErr("phone"); }}
-                    />
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      دخل الرقم اللي نقدر نتاصلو معاك فيه ونأكدو الطلب
-                    </p>
-                    {waErrors.phone && <p className={errCls}>{waErrors.phone}</p>}
-                  </div>
+              {/* 4. Address */}
+              <div>
+                <label className={waLbl}>العنوان الكامل *</label>
+                <textarea
+                  className={waInp + " resize-none"}
+                  rows={2}
+                  placeholder="مثال: الدار البيضاء، حي السلام، زنقة 12، رقم 5"
+                  value={waForm.address}
+                  onChange={(e) => { setWa("address", e.target.value); clearWaErr("address"); }}
+                />
+                {waErrors.address && <p className={errCls}>{waErrors.address}</p>}
+              </div>
 
-                  {/* 3. Size */}
-                  <div>
-                    <label className={waLbl}>القياس *</label>
-                    <div className="flex flex-wrap gap-2">
-                      {waSizes.map((s) => (
-                        <button
-                          key={s}
-                          type="button"
-                          onClick={() => { setWa("size", s); clearWaErr("size"); }}
-                          className={`px-3 py-1.5 border text-sm font-bold transition-all rounded-lg ${
-                            waForm.size === s
-                              ? "bg-[#25D366] text-white border-[#25D366]"
-                              : "border-gray-300 text-gray-700 hover:border-[#25D366] bg-white"
-                          }`}
-                        >
-                          {s}
-                        </button>
-                      ))}
-                    </div>
-                    {waErrors.size && <p className={errCls}>{waErrors.size}</p>}
-                  </div>
+              {/* Submit — fires Contact+WhatsAppClick, NOT Purchase */}
+              <button
+                type="button"
+                onClick={submitWa}
+                className="w-full bg-[#25D366] text-white font-black py-3.5 flex items-center justify-center gap-2 hover:bg-[#1ebe5d] active:scale-95 transition-all text-base rounded-xl"
+              >
+                <WhatsAppIcon className="h-5 w-5 text-white" />
+                أكمل الشراء
+              </button>
 
-                  {/* 4. Address */}
-                  <div>
-                    <label className={waLbl}>العنوان الكامل *</label>
-                    <textarea
-                      className={waInp + " resize-none"}
-                      rows={2}
-                      placeholder="مثال: الدار البيضاء، حي السلام، زنقة 12، رقم 5"
-                      value={waForm.address}
-                      onChange={(e) => { setWa("address", e.target.value); clearWaErr("address"); }}
-                    />
-                    {waErrors.address && <p className={errCls}>{waErrors.address}</p>}
-                  </div>
-
-                  {/* Submit WhatsApp form — fires Contact+WhatsAppClick, NOT Purchase */}
-                  <button
-                    type="button"
-                    onClick={submitWa}
-                    className="w-full bg-[#25D366] text-white font-black py-3.5 flex items-center justify-center gap-2 hover:bg-[#1ebe5d] active:scale-95 transition-all text-base rounded-xl"
-                  >
-                    <WhatsAppIcon className="h-5 w-5 text-white" />
-                    أكمل الشراء
-                  </button>
-                </>
+              {/* Fallback link — shown ONLY if desktop popup was blocked */}
+              {waBackupUrl && (
+                <a
+                  href={waBackupUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block text-center text-sm text-[#25D366] underline"
+                >
+                  فتح واتساب
+                </a>
               )}
             </div>
           )}
