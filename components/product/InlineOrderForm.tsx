@@ -81,9 +81,9 @@ export default function InlineOrderForm({ product }: Props) {
   // ── COD form state (unchanged) ────────────────────────────────────────────
   const [selectedSize, setSelectedSize] = useState("");
 
-  // ── InitiateCheckout — fires once when customer starts the COD form ─────────
-  // Triggered on first focus of any COD field, or on Buy click.
-  // Does NOT fire on page load, refresh, or WhatsApp interactions.
+  // ── InitiateCheckout — fires once when customer clicks the COD buy button ────
+  // Triggered ONLY on the "اشترِ الآن" button click (submitCod).
+  // Does NOT fire on page load, field focus, refresh, or WhatsApp interactions.
   const icFiredRef = useRef(false);
   const fireInitiateCheckoutOnce = () => {
     if (icFiredRef.current) return;
@@ -183,7 +183,7 @@ export default function InlineOrderForm({ product }: Props) {
   // Purchase pixel fires on the THANK-YOU PAGE ONLY (with localStorage dedupe).
   // This function does NOT fire Purchase — it redirects to /thank-you which does.
   const submitCod = async () => {
-    // Ensure InitiateCheckout fired (covers click-without-focus path)
+    // Fire InitiateCheckout once on buy-button click (before validation)
     fireInitiateCheckoutOnce();
     if (!validate()) return;
     setSubmittingCod(true);
@@ -462,7 +462,6 @@ export default function InlineOrderForm({ product }: Props) {
             className={inp}
             placeholder="مثال: فاطمة العلوي"
             value={form.full_name}
-            onFocus={fireInitiateCheckoutOnce}
             onChange={(e) => { set("full_name", e.target.value); clearErr("full_name"); }}
           />
           {fieldErrors.full_name && <p className={errCls}>{fieldErrors.full_name}</p>}
@@ -477,7 +476,6 @@ export default function InlineOrderForm({ product }: Props) {
             placeholder="مثال: 0612345678"
             dir="ltr"
             value={form.phone}
-            onFocus={fireInitiateCheckoutOnce}
             onChange={(e) => { set("phone", e.target.value); clearErr("phone"); }}
           />
           {fieldErrors.phone && <p className={errCls}>{fieldErrors.phone}</p>}
@@ -491,7 +489,6 @@ export default function InlineOrderForm({ product }: Props) {
             rows={2}
             placeholder="مثال: الدار البيضاء، سباتة، قرب المسجد"
             value={form.address}
-            onFocus={fireInitiateCheckoutOnce}
             onChange={(e) => { set("address", e.target.value); clearErr("address"); }}
           />
           {fieldErrors.address && <p className={errCls}>{fieldErrors.address}</p>}
