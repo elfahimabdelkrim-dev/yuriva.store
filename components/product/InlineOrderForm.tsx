@@ -11,8 +11,6 @@ import {
   getCookie,
 } from "@/lib/meta-pixel";
 import toast from "react-hot-toast";
-import { buildOrderWhatsAppURL } from "@/lib/whatsapp";
-import type { WhatsAppOrderData } from "@/types";
 
 // ── WhatsApp icon ─────────────────────────────────────────────────────────────
 function WhatsAppIcon({ className = "h-5 w-5" }: { className?: string }) {
@@ -239,40 +237,6 @@ export default function InlineOrderForm({ product }: Props) {
       // The thank-you page uses localStorage key yuriva_purchase_tracked_${orderId}
       // to fire Purchase exactly once (browser pixel), deduped with CAPI event_id
       // purchase_${orderId} generated server-side in /api/orders.
-
-      // WhatsApp opens for order CONFIRMATION (Purchase fires on thank-you, not here)
-      const waData: WhatsAppOrderData = {
-        order_id:      orderId,
-        customer_name: form.full_name.trim(),
-        phone:         form.phone.trim(),
-        city:          "",
-        address:       form.address.trim(),
-        total,
-        delivery_price: 0,
-        items: [{
-          id:            orderId,
-          product_id:    product.id,
-          product_title: product.title,
-          product_slug:  product.slug,
-          product_image: "",
-          price:         product.price,
-          quantity,
-          size:          selectedSize,
-          color:         selectedColors[0] ?? undefined,
-          pack_colors:   selectedColors.length > 1
-                           ? selectedColors.map((c, i) => ({ pieceIndex: i, color: c }))
-                           : undefined,
-          is_pack:       selectedColors.length > 1,
-        }],
-      };
-      const waUrl = buildOrderWhatsAppURL(waData);
-      try { sessionStorage.setItem(`wa_order_${orderId}`, waUrl); } catch { /* ignore */ }
-
-      const isMobile = /Android|iPhone|iPad|iPod|Mobile|webOS/i.test(
-        typeof navigator !== "undefined" ? navigator.userAgent : ""
-      );
-      if (isMobile) { window.location.href = waUrl; }
-      else { window.open(waUrl, "_blank", "noopener,noreferrer"); }
 
       const qs = new URLSearchParams({
         order_id:   orderId,
