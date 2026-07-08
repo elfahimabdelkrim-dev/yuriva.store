@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, ShoppingBag } from "lucide-react";
 import type { Product, ProductColor } from "@/types";
@@ -7,11 +7,7 @@ import { validateMoroccanPhone, formatPrice } from "@/lib/utils";
 import { siteConfig } from "@/config/site";
 import {
   fbqInitiateCheckout,
-  fbqPurchase,
   fbqContact,
-  fbqAdvancedMatch,
-  markPurchaseFired,
-  isPurchaseFired,
   getCookie,
 } from "@/lib/meta-pixel";
 import toast from "react-hot-toast";
@@ -84,6 +80,22 @@ export default function InlineOrderForm({ product }: Props) {
 
   // ── COD form state (unchanged) ────────────────────────────────────────────
   const [selectedSize, setSelectedSize] = useState("");
+
+  // ── InitiateCheckout — fires once when customer starts the COD form ─────────
+  // Triggered on first focus of any COD field, or on Buy click.
+  // Does NOT fire on page load, refresh, or WhatsApp interactions.
+  const icFiredRef = useRef(false);
+  const fireInitiateCheckoutOnce = () => {
+    if (icFiredRef.current) return;
+    icFiredRef.current = true;
+    fbqInitiateCheckout(
+      { id: product.id, title: product.title, price: product.price },
+      1,
+      undefined
+    );
+    console.log("[Meta Pixel] InitiateCheckout fired:", product.title);
+  };
+
   const [sizeError,    setSizeError]    = useState("");
   const quantity = 1;
 
@@ -166,21 +178,18 @@ export default function InlineOrderForm({ product }: Props) {
     return Object.keys(errs).length === 0 && sizeOk && colorOk;
   };
 
-  // ── COD submit (Buy Now) — fires Purchase ─────────────────────────────────
-  // This is a real order: saved to Supabase, synced to Google Sheets,
-  // and fbqPurchase is fired (CAPI deduplication via purchaseEventId).
-  // WhatsApp opens afterwards as order CONFIRMATION only — not the trigger.
+  // ── COD submit (Buy Now) ──────────────────────────────────────────────────
+  // Saves a real order to Supabase + Google Sheets.
+  // Purchase pixel fires on the THANK-YOU PAGE ONLY (with localStorage dedupe).
+  // This function does NOT fire Purchase — it redirects to /thank-you which does.
   const submitCod = async () => {
+    // Ensure InitiateCheckout fired (covers click-without-focus path)
+    fireInitiateCheckoutOnce();
     if (!validate()) return;
     setSubmittingCod(true);
-    const purchaseEventId = `purchase_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const fbp = getCookie("_fbp");
     const fbc = getCookie("_fbc");
     const eventSourceUrl = typeof window !== "undefined" ? window.location.href : "";
-    fbqInitiateCheckout(
-      { id: product.id, title: product.title, price: product.price },
-      quantity, selectedSize || undefined
-    );
     try {
       const nameParts = form.full_name.trim().split(/\s+/);
       const firstName = nameParts[0] ?? "";
@@ -212,7 +221,7 @@ export default function InlineOrderForm({ product }: Props) {
             total,
           }],
           meta: {
-            event_id:         purchaseEventId,
+            // event_id not sent — API generates purchase_${orderId} deterministically
             fbp:              fbp  || undefined,
             fbc:              fbc  || undefined,
             event_source_url: eventSourceUrl || undefined,
@@ -226,20 +235,12 @@ export default function InlineOrderForm({ product }: Props) {
         return;
       }
       const orderId = data.order_id ?? "";
+      // ── Purchase fires on /thank-you after redirect — NOT HERE ────────────
+      // The thank-you page uses localStorage key yuriva_purchase_tracked_${orderId}
+      // to fire Purchase exactly once (browser pixel), deduped with CAPI event_id
+      // purchase_${orderId} generated server-side in /api/orders.
 
-      // COD Purchase event — dedup guard
-      if (isPurchaseFired(purchaseEventId)) {
-        console.warn("[Meta Pixel] Purchase already fired for eventId:", purchaseEventId, "— skipping");
-      } else {
-        fbqAdvancedMatch(form.phone, firstName, lastName);
-        fbqPurchase(
-          { id: product.id, title: product.title, price: product.price },
-          orderId, total, quantity, purchaseEventId
-        );
-        markPurchaseFired(purchaseEventId);
-      }
-
-      // WhatsApp opens for order CONFIRMATION (Purchase was already fired above)
+      // WhatsApp opens for order CONFIRMATION (Purchase fires on thank-you, not here)
       const waData: WhatsAppOrderData = {
         order_id:      orderId,
         customer_name: form.full_name.trim(),
@@ -274,16 +275,17 @@ export default function InlineOrderForm({ product }: Props) {
       else { window.open(waUrl, "_blank", "noopener,noreferrer"); }
 
       const qs = new URLSearchParams({
-        order_id: orderId,
-        name:     form.full_name.trim(),
-        phone:    form.phone.trim(),
-        city:     "",
-        address:  form.address.trim(),
-        product:  product.title,
-        size:     selectedSize || "",
-        colors:   buildColorsParam(),
-        qty:      String(quantity),
-        total:    String(total),
+        order_id:   orderId,
+        name:       form.full_name.trim(),
+        phone:      form.phone.trim(),
+        city:       "",
+        address:    form.address.trim(),
+        product:    product.title,
+        product_id: product.id,
+        size:       selectedSize || "",
+        colors:     buildColorsParam(),
+        qty:        String(quantity),
+        total:      String(total),
       });
       router.push(`/thank-you?${qs.toString()}`);
     } catch {
@@ -460,6 +462,7 @@ export default function InlineOrderForm({ product }: Props) {
             className={inp}
             placeholder="مثال: فاطمة العلوي"
             value={form.full_name}
+            onFocus={fireInitiateCheckoutOnce}
             onChange={(e) => { set("full_name", e.target.value); clearErr("full_name"); }}
           />
           {fieldErrors.full_name && <p className={errCls}>{fieldErrors.full_name}</p>}
@@ -474,6 +477,7 @@ export default function InlineOrderForm({ product }: Props) {
             placeholder="مثال: 0612345678"
             dir="ltr"
             value={form.phone}
+            onFocus={fireInitiateCheckoutOnce}
             onChange={(e) => { set("phone", e.target.value); clearErr("phone"); }}
           />
           {fieldErrors.phone && <p className={errCls}>{fieldErrors.phone}</p>}
@@ -487,6 +491,7 @@ export default function InlineOrderForm({ product }: Props) {
             rows={2}
             placeholder="مثال: الدار البيضاء، سباتة، قرب المسجد"
             value={form.address}
+            onFocus={fireInitiateCheckoutOnce}
             onChange={(e) => { set("address", e.target.value); clearErr("address"); }}
           />
           {fieldErrors.address && <p className={errCls}>{fieldErrors.address}</p>}
@@ -628,7 +633,6 @@ export default function InlineOrderForm({ product }: Props) {
               )}
             </div>
           )}
-
         </div>
       </div>
     </div>

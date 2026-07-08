@@ -85,7 +85,11 @@ export async function POST(req: NextRequest) {
     // ── Google Sheets + Meta CAPI — parallel, both awaited ────────────────
     const pixelId     = process.env.NEXT_PUBLIC_META_PIXEL_ID;
     const accessToken = process.env.META_ACCESS_TOKEN;
-    const canSendCapi = !!(pixelId && accessToken && metaTracking.event_id);
+    // event_id is deterministic: purchase_${orderId}
+    // This matches the browser pixel event_id fired on the thank-you page,
+    // so Meta can deduplicate the CAPI and browser events for the same order.
+    const capiEventId = `purchase_${newOrder.id}`;
+    const canSendCapi = !!(pixelId && accessToken);
 
     type SyncResult = { ok: boolean; error?: string; stage?: string };
     type CapiResultLocal = {
@@ -119,19 +123,16 @@ export async function POST(req: NextRequest) {
       // ── Meta CAPI Purchase ─────────────────────────────────────────────
       // Server-side — fires even when mobile browser blocks window.fbq.
       // IMPORTANT: testEventCode is NOT passed for real orders.
-      //   Including test_event_code routes events to Test Events ONLY
-      //   and prevents them from appearing in normal Vue d'ensemble.
       (async (): Promise<CapiResultLocal> => {
         if (!canSendCapi) return { ok: true };
 
-        // Split customer name for CAPI Advanced Matching (fn/ln)
-        const rawName  = String(order.customer_first_name ?? "").trim();
-        const rawLast  = String(order.customer_last_name  ?? "").trim();
+        const rawName = String(order.customer_first_name ?? "").trim();
+        const rawLast = String(order.customer_last_name  ?? "").trim();
 
         console.log(
           "[Meta CAPI] Purchase send started",
           "order="        + newOrder.id,
-          "event_id="     + metaTracking.event_id,
+          "event_id="     + capiEventId,
           "value="        + (order.total_amount ?? 0),
           "event_source=" + (metaTracking.event_source_url || "(none)"),
           "has_fbp="      + !!(metaTracking.fbp),
@@ -150,8 +151,7 @@ export async function POST(req: NextRequest) {
             sendCapiPurchase({
               pixelId,
               accessToken,
-              // NO testEventCode here — real orders must appear in Vue d'ensemble
-              eventId:        metaTracking.event_id!,
+              eventId:        capiEventId,
               orderId:        newOrder.id,
               value:          order.total_amount ?? 0,
               productId:      firstItem?.product_id ?? "",
@@ -208,10 +208,9 @@ export async function POST(req: NextRequest) {
           "events_received=" + capi.eventsReceived,
           "fbtrace_id=" + (capi.fbtrace_id ?? "n/a"),
           "order=" + newOrder.id,
-          "event_id=" + metaTracking.event_id
+          "event_id=" + capiEventId
         );
       } else if (!capi.ok && capi.eventsReceived === 0) {
-        // HTTP 200 but Meta rejected the event (e.g. duplicate, bad data)
         console.warn(
           "[Meta CAPI] Purchase rejected by Meta",
           "events_received=0",
@@ -229,9 +228,51 @@ export async function POST(req: NextRequest) {
       console.log("[Meta CAPI] META_ACCESS_TOKEN not set — browser Pixel only for order", newOrder.id);
     }
 
+    // ── WhatsApp Admin Notification — fire-and-forget ─────────────────────
+    // Runs AFTER response is returned so customer is never blocked.
+    // Catches all errors internally — order success is guaranteed.
+    const orderForNotify = { ...newOrder } as Order & { id: string };
+    const itemsForNotify = [...items];
+
+    // Use setImmediate/Promise to avoid blocking the HTTP response
+    Promise.resolve().then(async () => {
+      try {
+        const { sendWhatsAppOrderNotification } = await import("@/lib/whatsapp-notify");
+        const waResult = await withTimeout(
+          sendWhatsAppOrderNotification(orderForNotify, itemsForNotify),
+          10000,
+          { ok: false, error: "wa_timeout" }
+        );
+
+        if (waResult.error === "disabled") {
+          // Not configured — silent skip
+          return;
+        }
+
+        const waStatus   = waResult.ok ? "sent" : "failed";
+        const waSentAt   = waResult.ok ? new Date().toISOString() : null;
+        const waError    = waResult.ok ? null : (waResult.error ?? "unknown").slice(0, 300);
+
+        // Persist notification status (non-blocking, best-effort)
+        supabase
+          .from("orders")
+          .update({
+            whatsapp_notify_status:  waStatus,
+            whatsapp_notify_error:   waError,
+            whatsapp_notify_sent_at: waSentAt,
+          })
+          .eq("id", newOrder.id)
+          .then(() => { /* ignored */ });
+
+      } catch (err) {
+        // WhatsApp notify must NEVER break order flow
+        console.error("[WA Notify] Top-level error (order still saved)", newOrder.id, String(err).slice(0, 200));
+      }
+    });
+
     return NextResponse.json({ success: true, order_id: newOrder.id });
   } catch (err) {
-    console.error("[Orders] Unexpected error:", err);
-    return NextResponse.json({ success: false, error: "server error" }, { status: 500 });
+    console.error("[Orders API] Unexpected error:", String(err).slice(0, 300));
+    return NextResponse.json({ success: false, error: "خطأ داخلي في الخادم" }, { status: 500 });
   }
 }

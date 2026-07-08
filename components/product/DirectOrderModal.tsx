@@ -6,7 +6,7 @@ import type { Product, ProductColor } from "@/types";
 import { validateMoroccanPhone, formatPrice } from "@/lib/utils";
 import { buildOrderWhatsAppURL } from "@/lib/whatsapp";
 import { siteConfig } from "@/config/site";
-import { fbqInitiateCheckout, fbqPurchase, fbqContact, getCookie } from "@/lib/meta-pixel";
+import { fbqInitiateCheckout, fbqContact, getCookie } from "@/lib/meta-pixel";
 import toast from "react-hot-toast";
 
 interface Props {
@@ -105,9 +105,6 @@ export default function DirectOrderModal({
     if (!validate()) return;
     setSubmitting(true);
 
-    // Generate a unique event_id for Purchase deduplication (browser + CAPI share this)
-    const purchaseEventId = `purchase_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-
     // Read Meta cookies from browser for CAPI user_data enrichment
     const fbp = getCookie("_fbp");
     const fbc = getCookie("_fbc");
@@ -146,9 +143,8 @@ export default function DirectOrderModal({
             total,
           },
         ],
-        // Meta tracking — used server-side for CAPI deduplication
+        // Meta tracking — CAPI event_id generated server-side as purchase_${orderId}
         meta: {
-          event_id: purchaseEventId,
           fbp: fbp || undefined,
           fbc: fbc || undefined,
           event_source_url: eventSourceUrl || undefined,
@@ -171,14 +167,9 @@ export default function DirectOrderModal({
 
       const orderId = data.order_id ?? "";
 
-      // ── Browser Purchase pixel (same eventId as CAPI) ──────────────────
-      fbqPurchase(
-        { id: product.id, title: product.title, price: product.price },
-        orderId,
-        total,
-        form.quantity,
-        purchaseEventId
-      );
+      // Purchase pixel fires on /thank-you page (via localStorage dedupe).
+      // This modal does NOT fire Purchase — regardless of mode.
+      // WhatsApp mode = Contact + WhatsAppClick only. COD = redirects to thank-you.
 
       if (mode === "whatsapp") {
         const colorsLabel = (() => {

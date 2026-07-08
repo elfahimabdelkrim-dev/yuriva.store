@@ -215,25 +215,29 @@ export function getCookie(name: string): string {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
-// ── Purchase deduplication guard (sessionStorage) ─────────────────────────────
-// Prevents double-firing Purchase if React re-renders or user navigates back.
+// ── Purchase deduplication guard (localStorage) ───────────────────────────────
+// Key pattern: yuriva_purchase_tracked_${orderId}
+// localStorage persists across tabs, refreshes, and browser restarts.
+// This prevents double-firing Purchase if the customer refreshes the
+// thank-you page, opens it in a new tab, or navigates back.
+// sessionStorage would lose state when the tab closes — not safe enough.
 
-const PURCHASE_KEY_PREFIX = "purchase_fired_";
+const PURCHASE_KEY_PREFIX = "yuriva_purchase_tracked_";
 
-/** Mark a purchaseEventId as fired — safe no-op if sessionStorage unavailable */
-export function markPurchaseFired(eventId: string): void {
+/** Mark an orderId as Purchase-tracked — safe no-op if localStorage unavailable */
+export function markPurchaseFired(orderId: string): void {
   try {
-    if (typeof sessionStorage !== "undefined") {
-      sessionStorage.setItem(PURCHASE_KEY_PREFIX + eventId, "1");
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(PURCHASE_KEY_PREFIX + orderId, "1");
     }
   } catch { /* ignore quota or security errors */ }
 }
 
-/** Check if a purchaseEventId was already fired this session */
-export function isPurchaseFired(eventId: string): boolean {
+/** Check if an orderId was already Purchase-tracked */
+export function isPurchaseFired(orderId: string): boolean {
   try {
-    if (typeof sessionStorage !== "undefined") {
-      return sessionStorage.getItem(PURCHASE_KEY_PREFIX + eventId) === "1";
+    if (typeof localStorage !== "undefined") {
+      return localStorage.getItem(PURCHASE_KEY_PREFIX + orderId) === "1";
     }
   } catch { /* ignore */ }
   return false;
