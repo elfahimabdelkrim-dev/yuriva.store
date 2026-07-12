@@ -34,7 +34,22 @@ function quoteSheet(title: string): string {
   return `'${title.replace(/'/g, "''")}'`;
 }
 
-// ── Sheet headers (13 columns) ─────────────────────────────────────────────
+/**
+ * Convert a 1-based column number to an A1-notation letter.
+ * Supports up to 702 columns (A–ZZ).
+ * Examples: 1 → "A", 13 → "M", 14 → "N", 27 → "AA"
+ */
+function columnToLetter(n: number): string {
+  let result = "";
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    result = String.fromCharCode(65 + rem) + result;
+    n = Math.floor((n - 1) / 26);
+  }
+  return result;
+}
+
+// ── Sheet headers (14 columns — A through N) ────────────────────────────────
 
 const HEADERS = [
   "رقم الطلب", "التاريخ", "الاسم الكامل", "الهاتف", "المدينة",
@@ -218,13 +233,18 @@ async function getFirstSheetTitle(sheets: SheetsClient, spreadsheetId: string): 
   }
 }
 
-/** Ensure header row exists; writes if the sheet is empty */
+/** Ensure header row exists; writes if the sheet is empty.
+ *  Range is calculated dynamically from HEADERS.length — no hardcoding.
+ */
 async function ensureHeaders(
   sheets: SheetsClient,
   spreadsheetId: string,
   sheetTitle: string
 ): Promise<void> {
-  const range = `${quoteSheet(sheetTitle)}!A1:M1`;
+  const lastCol  = columnToLetter(HEADERS.length);          // e.g. "N" for 14 headers
+  const range    = `${quoteSheet(sheetTitle)}!A1:${lastCol}1`;
+  console.log(`[Google Sheets] headers length: ${HEADERS.length}`);
+  console.log(`[Google Sheets] header range: ${range}`);
   const existing = await sheets.spreadsheets.values.get({ spreadsheetId, range });
   const rows = existing.data?.values as string[][] | undefined;
   if (!rows || rows.length === 0 || !rows[0]?.length) {
@@ -234,6 +254,7 @@ async function ensureHeaders(
       valueInputOption: "USER_ENTERED",
       requestBody: { values: [HEADERS] },
     });
+    console.log(`[Google Sheets] headers written: ${HEADERS.join(", ")}`);
   }
 }
 
@@ -402,13 +423,19 @@ export async function syncOrderToSheet(order: Order, config?: SyncConfig): Promi
     ];
 
     stage = "append_row";
+    // Pad row to match HEADERS length — prevents column-count mismatch errors
+    const paddedRow = Array.from({ length: HEADERS.length }, (_, i) => row[i] ?? "");
+    const lastAppendCol = columnToLetter(HEADERS.length);
+    console.log(`[Google Sheets] row length: ${paddedRow.length}`);
+    console.log(`[Google Sheets] append range: ${quoteSheet(sheetTitle)}!A:${lastAppendCol}`);
     await sheets.spreadsheets.values.append({
       spreadsheetId: sheetId,
-      range: `${quoteSheet(sheetTitle)}!A:N`,
+      range: `${quoteSheet(sheetTitle)}!A:${lastAppendCol}`,
       valueInputOption: "USER_ENTERED",
       insertDataOption: "INSERT_ROWS",
-      requestBody: { values: [row] },
+      requestBody: { values: [paddedRow] },
     });
+    console.log(`[Google Sheets] append success for order ${order.id}`);
 
     return { ok: true };
   } catch (err: unknown) {
