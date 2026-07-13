@@ -152,11 +152,23 @@ export interface Order {
   utm_medium?: string;
   utm_content?: string;
   utm_term?: string;
+  // Attribution / tracking fields
+  fbclid?: string;
+  fbp?: string;
+  fbc?: string;
+  landing_page?: string;
+  referrer?: string;
+  purchase_event_id?: string;
+  capi_status?: string;
+  pixel_status?: string;
   google_sheet_synced?: boolean;
   google_sheet_error?: string;
   internal_notes?: string;
   is_duplicate?: boolean;
   is_blacklisted?: boolean;
+  whatsapp_notify_status?: string;
+  whatsapp_notify_error?: string;
+  whatsapp_notify_sent_at?: string;
   items?: OrderItem[];
   status_history?: OrderStatusHistory[];
   created_at?: string;

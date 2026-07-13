@@ -27,6 +27,9 @@ export async function POST(req: NextRequest) {
         event_id?: string;
         fbp?: string;
         fbc?: string;
+        fbclid?: string;
+        landing_page?: string;
+        referrer?: string;
         event_source_url?: string;
       };
     };
@@ -91,6 +94,12 @@ export async function POST(req: NextRequest) {
     const capiEventId = `purchase_${newOrder.id}`;
     const canSendCapi = !!(pixelId && accessToken);
 
+    // Enrich fbc: if client sent fbc use it; else build from fbclid per Meta spec
+    const fbclid = metaTracking.fbclid;
+    const fbcEnriched =
+      metaTracking.fbc ||
+      (fbclid ? `fb.1.${Math.floor(Date.now() / 1000)}.${fbclid}` : undefined);
+
     type SyncResult = { ok: boolean; error?: string; stage?: string };
     type CapiResultLocal = {
       ok: boolean;
@@ -109,7 +118,17 @@ export async function POST(req: NextRequest) {
             console.log("[Google Sheets] Not configured — skipping order", newOrder.id);
             return { ok: true };
           }
-          const orderWithItems = { ...newOrder, items } as Order;
+          // Merge attribution data into order for Google Sheet row
+          const orderWithItems = {
+            ...newOrder,
+            items,
+            purchase_event_id: capiEventId,
+            fbclid:       metaTracking.fbclid,
+            fbp:          metaTracking.fbp,
+            fbc:          fbcEnriched,
+            landing_page: metaTracking.landing_page,
+            referrer:     metaTracking.referrer,
+          } as Order;
           return withTimeout<SyncResult>(
             syncOrderToSheet(orderWithItems),
             8000,
@@ -136,7 +155,8 @@ export async function POST(req: NextRequest) {
           "value="        + (order.total_amount ?? 0),
           "event_source=" + (metaTracking.event_source_url || "(none)"),
           "has_fbp="      + !!(metaTracking.fbp),
-          "has_fbc="      + !!(metaTracking.fbc),
+          "has_fbc="      + !!(fbcEnriched),
+          "has_fbclid="   + !!(fbclid),
           "has_phone="    + !!(order.phone),
           "has_name="     + !!(rawName),
           "has_ip="       + !!(getClientIp(req))
@@ -164,8 +184,8 @@ export async function POST(req: NextRequest) {
               clientIp:       getClientIp(req),
               userAgent:      req.headers.get("user-agent") || undefined,
               fbp:            metaTracking.fbp,
-              fbc:            metaTracking.fbc,
-              eventSourceUrl: metaTracking.event_source_url,
+              fbc:            fbcEnriched,
+              eventSourceUrl: metaTracking.event_source_url || metaTracking.landing_page,
             }),
             6000,
             { ok: false, error: "capi_timeout" }
@@ -185,12 +205,15 @@ export async function POST(req: NextRequest) {
       ? capiResult.value
       : { ok: false, error: "promise_rejected" } as CapiResultLocal;
 
-    // Google Sheets status update (non-blocking)
+    // Google Sheets + attribution status update (non-blocking)
+    // purchase_event_id / capi_status columns silently fail if not yet migrated in DB
     supabase
       .from("orders")
       .update({
         google_sheet_synced: sheet.ok,
         google_sheet_error:  sheet.ok ? null : ((sheet as SyncResult).error ?? "sync_failed").slice(0, 200),
+        purchase_event_id:   capiEventId,
+        capi_status:         canSendCapi ? (capi.ok ? "sent" : "failed") : "skipped",
       })
       .eq("id", newOrder.id)
       .then(() => { /* intentionally ignored */ });

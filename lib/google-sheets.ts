@@ -49,12 +49,18 @@ function columnToLetter(n: number): string {
   return result;
 }
 
-// ── Sheet headers (14 columns — A through N) ────────────────────────────────
+// ── Sheet headers (25 columns — A through Y) ────────────────────────────────
+// Cols 1–14:  core order data
+// Cols 15–25: attribution + tracking
 
 const HEADERS = [
+  // Core order data (A–N)
   "رقم الطلب", "التاريخ", "الاسم الكامل", "الهاتف", "المدينة",
   "العنوان", "المنتج", "المقاس", "الألوان", "الكمية", "المجموع",
   "الحالة", "ملاحظة", "المصدر",
+  // Attribution + tracking (O–Y)
+  "purchase_event_id", "pixel_status", "capi_status", "google_sheet_synced",
+  "fbclid", "fbp", "fbc", "utm_source", "utm_campaign", "landing_page", "referrer",
 ];
 
 // ── Retry helper ───────────────────────────────────────────────────────────
@@ -406,6 +412,7 @@ export async function syncOrderToSheet(order: Order, config?: SyncConfig): Promi
     })();
 
     const row = [
+      // Cols 1–14: core order data
       order.id ?? "",
       new Date(order.created_at || Date.now()).toLocaleString("ar-MA"),
       fullName,
@@ -420,6 +427,18 @@ export async function syncOrderToSheet(order: Order, config?: SyncConfig): Promi
       order.status ?? "new",
       order.notes ?? "",
       order.source ?? "direct",
+      // Cols 15–25: attribution + tracking
+      order.purchase_event_id ?? "",
+      order.pixel_status       ?? "pending",
+      order.capi_status        ?? "",
+      String(order.google_sheet_synced ?? true),
+      order.fbclid             ?? "",
+      order.fbp                ?? "",
+      order.fbc                ?? "",
+      order.utm_source         ?? "",
+      order.utm_campaign       ?? "",
+      order.landing_page       ?? "",
+      order.referrer           ?? "",
     ];
 
     stage = "append_row";

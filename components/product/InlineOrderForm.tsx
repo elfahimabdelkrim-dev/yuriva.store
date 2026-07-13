@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, ShoppingBag } from "lucide-react";
 import type { Product, ProductColor } from "@/types";
@@ -78,6 +78,39 @@ export default function InlineOrderForm({ product }: Props) {
 
   // ── COD form state (unchanged) ────────────────────────────────────────────
   const [selectedSize, setSelectedSize] = useState("");
+
+  // ── Attribution capture — runs once on mount ──────────────────────────────────
+  // Reads fbclid + utm_* from URL params, landing_page + referrer from window,
+  // and persists to sessionStorage. submitCod reads these back and sends with order.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const url = new URL(window.location.href);
+      const fbclid      = url.searchParams.get("fbclid")       || "";
+      const utmSource   = url.searchParams.get("utm_source")   || "";
+      const utmMedium   = url.searchParams.get("utm_medium")   || "";
+      const utmCampaign = url.searchParams.get("utm_campaign") || "";
+      const utmContent  = url.searchParams.get("utm_content")  || "";
+      const landingPage = window.location.href;
+      const referrer    = document.referrer || "";
+
+      const ss = sessionStorage;
+      const store = (key: string, val: string) => { if (val) ss.setItem("yuriva_attr_" + key, val); };
+
+      // Only capture landing_page + referrer once (first touch)
+      if (!ss.getItem("yuriva_attr_landing_page")) {
+        store("landing_page", landingPage);
+        store("referrer",     referrer);
+      }
+      // fbclid + utm_*: always update if present in current URL
+      store("fbclid",       fbclid);
+      store("utm_source",   utmSource);
+      store("utm_medium",   utmMedium);
+      store("utm_campaign", utmCampaign);
+      store("utm_content",  utmContent);
+    } catch { /* non-critical */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── InitiateCheckout — fires once when customer clicks the COD buy button ────
   // Triggered ONLY on the "اشترِ الآن" button click (submitCod).
@@ -188,6 +221,22 @@ export default function InlineOrderForm({ product }: Props) {
     const fbp = getCookie("_fbp");
     const fbc = getCookie("_fbc");
     const eventSourceUrl = typeof window !== "undefined" ? window.location.href : "";
+
+    // Read attribution data persisted on page load
+    const attrGet = (key: string): string | undefined => {
+      try { return sessionStorage.getItem("yuriva_attr_" + key) || undefined; } catch { return undefined; }
+    };
+    const fbclid      = attrGet("fbclid");
+    const utmSource   = attrGet("utm_source");
+    const utmMedium   = attrGet("utm_medium");
+    const utmCampaign = attrGet("utm_campaign");
+    const utmContent  = attrGet("utm_content");
+    const landingPage = attrGet("landing_page");
+    const referrer    = attrGet("referrer");
+
+    // Construct fbc from fbclid if _fbc cookie is absent (Meta CAPI spec)
+    const fbcFinal = fbc || (fbclid ? `fb.1.${Math.floor(Date.now() / 1000)}.${fbclid}` : undefined);
+
     try {
       const nameParts = form.full_name.trim().split(/\s+/);
       const firstName = nameParts[0] ?? "";
@@ -208,6 +257,10 @@ export default function InlineOrderForm({ product }: Props) {
             payment_method: "cod" as const,
             status:         "جديد" as const,
             source:         "direct_cod",
+            utm_source:   utmSource,
+            utm_medium:   utmMedium,
+            utm_campaign: utmCampaign,
+            utm_content:  utmContent,
           },
           items: [{
             product_id:    product.id,
@@ -220,8 +273,11 @@ export default function InlineOrderForm({ product }: Props) {
           }],
           meta: {
             // event_id not sent — API generates purchase_${orderId} deterministically
-            fbp:              fbp  || undefined,
-            fbc:              fbc  || undefined,
+            fbp:              fbp       || undefined,
+            fbc:              fbcFinal  || undefined,
+            fbclid:           fbclid    || undefined,
+            landing_page:     landingPage || undefined,
+            referrer:         referrer  || undefined,
             event_source_url: eventSourceUrl || undefined,
           },
         }),
