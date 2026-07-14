@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { Save, TestTube, RefreshCw, Download, AlertCircle, CheckCircle, Bug } from "lucide-react";
+import { Save, TestTube, RefreshCw, Download, AlertCircle, CheckCircle, Bug, Wrench } from "lucide-react";
 import toast from "react-hot-toast";
 
 const HAS_SUPABASE = !!(typeof process !== "undefined" && process.env.NEXT_PUBLIC_SUPABASE_URL);
@@ -32,6 +32,14 @@ export default function AdminGoogleSheetsPage() {
   const [testing, setTesting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [repairing, setRepairing] = useState(false);
+  const [repairResult, setRepairResult] = useState<{
+    mode: "detect" | "fix";
+    message: string;
+    shiftedRows?: { row: number; firstDataCol: string; firstValue: string }[];
+    repaired?: number;
+    errors?: string[];
+  } | null>(null);
   const [syncResult, setSyncResult] = useState<{
     synced: number;
     failed: number;
@@ -155,6 +163,41 @@ export default function AdminGoogleSheetsPage() {
       ].join("\n");
       alert("تشخيص Google Sheets\n\n" + lines);
     } catch { toast.error("خطأ في التشخيص"); }
+  };
+
+  const detectRepair = async (mode: "detect" | "fix") => {
+    if (!canTest) { toast.error("Google Sheets غير مهيأ"); return; }
+    setRepairing(true);
+    setRepairResult(null);
+    try {
+      const method = mode === "fix" ? "POST" : "GET";
+      const r = await fetch("/api/admin/google-sheets/repair", { method });
+      const d = await r.json() as {
+        success: boolean;
+        message?: string;
+        error?: string;
+        shiftedRows?: { row: number; firstDataCol: string; firstValue: string }[];
+        repaired?: number;
+        errors?: string[];
+      };
+      if (!d.success) {
+        toast.error(d.error || "خطأ في الإصلاح");
+        setRepairResult(null);
+      } else {
+        setRepairResult({
+          mode,
+          message:     d.message ?? "",
+          shiftedRows: d.shiftedRows,
+          repaired:    d.repaired,
+          errors:      d.errors,
+        });
+        if (mode === "fix") {
+          if ((d.repaired ?? 0) > 0) toast.success(`تم إصلاح ${d.repaired} صف`);
+          else toast.success("لا توجد صفوف تحتاج إصلاح");
+        }
+      }
+    } catch { toast.error("خطأ في الاتصال"); }
+    setRepairing(false);
   };
 
   const syncAll = async () => {
@@ -394,6 +437,56 @@ export default function AdminGoogleSheetsPage() {
         {!HAS_SUPABASE && (
           <p className="text-xs text-yellow-700 mt-2">خاصك تربط Supabase باش تقدر تزامن</p>
         )}
+      </div>
+
+      {/* Repair shifted rows */}
+      <div className="bg-white border border-gray-200 p-5 mb-4">
+        <h2 className="font-black text-brand-navy mb-1">إصلاح ترتيب Google Sheet</h2>
+        <p className="text-brand-gray text-sm mb-4">
+          اكتشف أو صلح الصفوف اللي كتبت فـ العمود الغلط (O/N بدل A).
+        </p>
+
+        {repairResult && (
+          <div className={"mb-4 p-3 border text-sm " + ((repairResult.errors?.length ?? 0) > 0 ? "bg-red-50 border-red-200 text-red-800" : "bg-blue-50 border-blue-200 text-blue-800")}>
+            <p className="font-bold mb-1">{repairResult.message}</p>
+            {repairResult.mode === "detect" && repairResult.shiftedRows && repairResult.shiftedRows.length > 0 && (
+              <ul className="text-xs space-y-0.5 mt-1">
+                {repairResult.shiftedRows.map((r) => (
+                  <li key={r.row}>
+                    صف {r.row} — البداية من العمود <strong>{r.firstDataCol}</strong> — القيمة: {r.firstValue}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {repairResult.mode === "fix" && repairResult.repaired !== undefined && (
+              <p className="text-xs mt-1">تم إصلاح {repairResult.repaired} صف</p>
+            )}
+            {(repairResult.errors?.length ?? 0) > 0 && (
+              <ul className="text-xs mt-1 space-y-0.5">
+                {repairResult.errors!.map((e, i) => <li key={i}>{e}</li>)}
+              </ul>
+            )}
+          </div>
+        )}
+
+        <div className="flex gap-2 flex-wrap">
+          <button
+            onClick={() => detectRepair("detect")}
+            disabled={repairing || !canTest}
+            className="flex items-center gap-2 border border-brand-navy text-brand-navy font-bold px-4 py-2 text-sm hover:bg-brand-navy hover:text-white disabled:opacity-50 transition-colors"
+          >
+            <Bug className="h-3.5 w-3.5" />
+            {repairing ? "جاري الفحص..." : "كشف الصفوف المنحرفة"}
+          </button>
+          <button
+            onClick={() => detectRepair("fix")}
+            disabled={repairing || !canTest}
+            className="flex items-center gap-2 bg-orange-500 text-white font-bold px-4 py-2 text-sm hover:bg-orange-600 disabled:opacity-50 transition-colors"
+          >
+            <Wrench className="h-3.5 w-3.5" />
+            {repairing ? "جاري الإصلاح..." : "إصلاح الصفوف المنحرفة"}
+          </button>
+        </div>
       </div>
 
       {/* Export CSV */}
