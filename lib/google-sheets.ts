@@ -1,11 +1,15 @@
 // Google Sheets sync — server-side only, NEVER expose credentials to client
 //
+// Main sheet: 14 clean columns (A:N) — order data only, no tracking fields.
+// Tracking data (fbclid, fbc, capi_status, etc.) stays in Supabase.
+// Optional "Tracking" tab is populated during rebuildSheetFromOrders().
+//
 // Root-cause fix for "shifted to the right":
-//   The old code used sheets.spreadsheets.values.append() whose "table detection"
-//   algorithm can mis-identify the insertion column when the sheet has a mix of
-//   14-column legacy rows and new 25-column headers.
-//   Fix: read column A to find the next empty row, then write with values.update()
-//   to an explicit range like 'Feuille 1'!A35:Y35 — always starts from column A.
+//   The old code used sheets.spreadsheets.values.append() whose table-detection
+//   algorithm mis-identified the insertion column when the sheet had a mix of
+//   14-column legacy rows and the old 25-column headers.
+//   Fix: read column A for the next empty row, then write with values.update()
+//   to an explicit range like 'Feuille 1'!A35:N35 — always starts from column A.
 //
 // Supported env vars:
 //   GOOGLE_PRIVATE_KEY            — required (service account PEM key)
@@ -15,7 +19,7 @@
 import crypto from "crypto";
 import type { Order } from "@/types";
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────────────
 
 function toBase64Url(buf: Buffer): string {
   return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
@@ -39,7 +43,7 @@ function quoteSheet(title: string): string {
 /**
  * Convert a 1-based column number to an A1-notation letter.
  * Supports up to 702 columns (A–ZZ).
- * Examples: 1 → "A", 14 → "N", 25 → "Y", 27 → "AA"
+ * Examples: 1 → "A", 14 → "N", 26 → "Z", 27 → "AA"
  */
 export function columnToLetter(n: number): string {
   let result = "";
@@ -51,41 +55,108 @@ export function columnToLetter(n: number): string {
   return result;
 }
 
-// ── Sheet headers (25 columns — A through Y) ─────────────────────────────
-// Cols 1–14  (A–N): core order data — MUST stay in this exact order
-// Cols 15–25 (O–Y): attribution + tracking fields
+// ── Main sheet headers (14 columns — A through N) ───────────────────────────────
+// These are the ONLY columns written to the main "Feuille 1" tab.
+// Tracking fields (fbclid, fbc, capi_status, etc.) stay in Supabase
+// and are optionally written to a separate "Tracking" tab on rebuild.
 
-const HEADERS = [
-  // Core order data (A–N)
-  "رقم الطلب",      // A
-  "التاريخ",              // B
-  "الاسم الكامل",  // C
-  "الهاتف",                    // D
-  "المدينة",              // E
-  "العنوان",              // F
-  "المنتج",                    // G
-  "المقاس",                    // H
-  "الألوان",              // I
-  "الكمية",                    // J
-  "المجموع",              // K
-  "الحالة",                    // L
-  "ملاحظة",                    // M
-  "المصدر",                    // N
-  // Attribution + tracking (O–Y)
-  "purchase_event_id",                                       // O
-  "pixel_status",                                            // P
-  "capi_status",                                             // Q
-  "google_sheet_synced",                                     // R
-  "fbclid",                                                  // S
-  "fbp",                                                     // T
-  "fbc",                                                     // U
-  "utm_source",                                              // V
-  "utm_campaign",                                            // W
-  "landing_page",                                            // X
-  "referrer",                                                // Y
+const MAIN_HEADERS = [
+  "\u0631\u0642\u0645 \u0627\u0644\u0637\u0644\u0628",    // A
+  "\u0627\u0644\u062a\u0627\u0631\u064a\u062e",             // B
+  "\u0627\u0644\u0627\u0633\u0645 \u0627\u0644\u0643\u0627\u0645\u0644",  // C
+  "\u0627\u0644\u0647\u0627\u062a\u0641",                    // D
+  "\u0627\u0644\u0645\u062f\u064a\u0646\u0629",             // E
+  "\u0627\u0644\u0639\u0646\u0648\u0627\u0646",             // F
+  "\u0627\u0644\u0645\u0646\u062a\u062c",                    // G
+  "\u0627\u0644\u0645\u0642\u0627\u0633",                    // H
+  "\u0627\u0644\u0623\u0644\u0648\u0627\u0646",             // I
+  "\u0627\u0644\u0643\u0645\u064a\u0629",                    // J
+  "\u0627\u0644\u0645\u062c\u0645\u0648\u0639",             // K
+  "\u0627\u0644\u062d\u0627\u0644\u0629",                    // L
+  "\u0645\u0644\u0627\u062d\u0638\u0629",                    // M
+  "\u0627\u0644\u0645\u0635\u062f\u0631",                    // N
 ];
 
-// ── Retry helper ───────────────────────────────────────────────────────────
+// ── Tracking tab headers (11 columns) ────────────────────────────────────────────────
+// Written to the separate "Tracking" tab during rebuildSheetFromOrders().
+// NEVER mixed into the main orders sheet (Feuille 1).
+
+const TRACKING_HEADERS = [
+  "order_id",
+  "purchase_event_id",
+  "capi_status",
+  "pixel_status",
+  "fbclid",
+  "fbp",
+  "fbc",
+  "utm_source",
+  "utm_campaign",
+  "landing_page",
+  "referrer",
+];
+
+// ── Row builders ──────────────────────────────────────────────────────────────────────
+
+/** Build the 14-column main row. No tracking fields. */
+function buildMainRow(order: Order): string[] {
+  const itemsTitle = order.items?.map((i) => i.product_title).filter(Boolean).join(", ") || "";
+  const sizes      = order.items?.map((i) => i.size).filter(Boolean).join(", ") || "";
+  const totalQty   = order.items?.reduce((s, i) => s + (Number(i.quantity) || 0), 0) || 1;
+  const fullName   = `${order.customer_first_name ?? ""} ${order.customer_last_name ?? ""}`.trim();
+
+  const colorsStr = (() => {
+    try {
+      const raw = order.items?.[0]?.colors;
+      if (!raw || raw === "[]") return "";
+      const parsed = JSON.parse(raw) as Array<{ pieceIndex?: number; color?: { label?: string }; label?: string }>;
+      return parsed
+        .map((c, idx) => {
+          const label = c.color?.label ?? c.label ?? "";
+          return parsed.length > 1 ? `${idx + 1}: ${label}` : label;
+        })
+        .filter(Boolean)
+        .join("\u060c ");
+    } catch { return ""; }
+  })();
+
+  const row: string[] = [
+    order.id          ?? "",                                                    // A
+    new Date(order.created_at || Date.now()).toLocaleString("ar-MA"),          // B
+    fullName,                                                                   // C
+    order.phone       ?? "",                                                    // D
+    order.city        ?? "",                                                    // E
+    order.address     ?? "",                                                    // F
+    itemsTitle,                                                                 // G
+    sizes,                                                                      // H
+    colorsStr,                                                                  // I
+    String(totalQty),                                                           // J
+    String(order.total_amount ?? 0),                                            // K
+    order.status      ?? "new",                                                 // L
+    order.notes       ?? "",                                                    // M
+    order.source      ?? "direct_cod",                                          // N
+  ];
+
+  return Array.from({ length: MAIN_HEADERS.length }, (_, i) => row[i] ?? "");
+}
+
+/** Build the 11-column tracking row for the Tracking tab. */
+function buildTrackingRow(order: Order): string[] {
+  return [
+    order.id                ?? "",
+    order.purchase_event_id ?? "",
+    order.capi_status       ?? "",
+    order.pixel_status      ?? "",
+    order.fbclid            ?? "",
+    order.fbp               ?? "",
+    order.fbc               ?? "",
+    order.utm_source        ?? "",
+    order.utm_campaign      ?? "",
+    order.landing_page      ?? "",
+    order.referrer          ?? "",
+  ];
+}
+
+// ── Retry helper ─────────────────────────────────────────────────────────────────────────
 
 const RETRYABLE = ["Premature close", "ECONNRESET", "ETIMEDOUT", "fetch failed", "network"];
 
@@ -109,7 +180,7 @@ async function fetchWithRetry(
   throw lastErr;
 }
 
-// ── JWT → Access Token ─────────────────────────────────────────────────────
+// ── JWT → Access Token ─────────────────────────────────────────────────────────────────
 
 async function fetchGoogleAccessToken(email: string, privateKey: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
@@ -154,7 +225,7 @@ async function fetchGoogleAccessToken(email: string, privateKey: string): Promis
   return data.access_token;
 }
 
-// ── Sheet ID cleaner ──────────────────────────────────────────────────────
+// ── Sheet ID cleaner ────────────────────────────────────────────────────────────────────
 
 export function cleanSheetId(raw: string): string {
   const trimmed = raw.trim().replace(/\s+/g, "");
@@ -172,22 +243,22 @@ export function cleanSheetId(raw: string): string {
 }
 
 export function sheetIdWarning(id: string): string | null {
-  if (!id) return "فارغ";
-  if (id.length < 20) return `قصير جداً (${id.length} حرف) — تحقق من القيمة`;
-  if (id.length > 60) return `طويل جداً (${id.length} حرف) — ربما يحتوي على URL أو تكرار`;
+  if (!id) return "\u0641\u0627\u0631\u063a";
+  if (id.length < 20) return `\u0642\u0635\u064a\u0631 \u062c\u062f\u0627\u064b (${id.length} \u062d\u0631\u0641) \u2014 \u062a\u062d\u0642\u0642 \u0645\u0646 \u0627\u0644\u0642\u064a\u0645\u0629`;
+  if (id.length > 60) return `\u0637\u0648\u064a\u0644 \u062c\u062f\u0627\u064b (${id.length} \u062d\u0631\u0641) \u2014 \u0631\u0628\u0645\u0627 \u064a\u062d\u062a\u0648\u064a \u0639\u0644\u0649 URL \u0623\u0648 \u062a\u0643\u0631\u0627\u0631`;
   return null;
 }
 
-// ── Public config helpers ──────────────────────────────────────────────────
+// ── Public config helpers ──────────────────────────────────────────────────────────────────
 
 export function isConfigured(): boolean {
   return !!(process.env.GOOGLE_PRIVATE_KEY && getServiceEmail() && process.env.GOOGLE_SHEET_ID);
 }
 
 export function getConfigStatus() {
-  const rawKey        = process.env.GOOGLE_PRIVATE_KEY ?? "";
-  const normalizedKey = rawKey ? normalizePrivateKey(rawKey) : "";
-  const rawSheetId    = process.env.GOOGLE_SHEET_ID ?? "";
+  const rawKey         = process.env.GOOGLE_PRIVATE_KEY ?? "";
+  const normalizedKey  = rawKey ? normalizePrivateKey(rawKey) : "";
+  const rawSheetId     = process.env.GOOGLE_SHEET_ID ?? "";
   const cleanedSheetId = cleanSheetId(rawSheetId);
   return {
     hasPrivateKey:    rawKey.length > 0,
@@ -201,7 +272,7 @@ export function getConfigStatus() {
   };
 }
 
-// ── Internal builder ───────────────────────────────────────────────────────
+// ── Internal builder ───────────────────────────────────────────────────────────────────────
 
 interface SyncConfig {
   sheetId?: string;
@@ -252,35 +323,32 @@ async function getFirstSheetTitle(sheets: SheetsClient, spreadsheetId: string): 
 }
 
 /**
- * Always write the current HEADERS to row 1 (A1:Y1).
- * Uses values.update — does NOT insert rows, so no data is ever shifted.
- * This safely upgrades old 14-column headers to the current 25-column schema.
+ * Write 14 MAIN_HEADERS to row 1 (A1:N1).
+ * Uses values.update — never inserts rows, never shifts data.
  */
 async function ensureHeaders(
   sheets: SheetsClient,
   spreadsheetId: string,
   sheetTitle: string
 ): Promise<void> {
-  const lastCol = columnToLetter(HEADERS.length);
+  const lastCol = columnToLetter(MAIN_HEADERS.length); // "N"
   const range   = `${quoteSheet(sheetTitle)}!A1:${lastCol}1`;
-  console.log(`[Google Sheets] headers length: ${HEADERS.length}`);
+  console.log(`[Google Sheets] main headers length: ${MAIN_HEADERS.length}`);
   console.log(`[Google Sheets] header range: ${range}`);
 
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range,
     valueInputOption: "USER_ENTERED",
-    requestBody: { values: [HEADERS] },
+    requestBody: { values: [MAIN_HEADERS] },
   });
-  console.log(`[Google Sheets] headers written (${HEADERS.length} columns)`);
+  console.log(`[Google Sheets] headers written (${MAIN_HEADERS.length} columns)`);
 }
 
 /**
  * Read column A and return:
  *   nextRow     — 1-based index of the first empty row (after all data)
  *   existingIds — all values found in column A (order IDs + header)
- *
- * This is the anchor for the write range: 'Sheet'!A{nextRow}:Y{nextRow}
  */
 async function getNextEmptyRow(
   sheets: SheetsClient,
@@ -292,25 +360,48 @@ async function getNextEmptyRow(
     range: `${quoteSheet(sheetTitle)}!A:A`,
   });
   const values = (response.data?.values as string[][] | undefined) || [];
-  // Each element is a row; length = last row index with data in col A
   const existingIds = values.map((r) => (r[0] ?? "").trim());
   return {
-    nextRow:     values.length + 1,   // next empty row (1-indexed)
+    nextRow:     values.length + 1,
     existingIds,
   };
 }
 
-// ── Test connection ────────────────────────────────────────────────────────
+/** Ensure the "Tracking" tab exists. Returns true if available. */
+async function ensureTrackingTab(sheets: SheetsClient, spreadsheetId: string): Promise<boolean> {
+  try {
+    const meta = await sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: "sheets.properties.title",
+    });
+    const existingTitles = ((meta.data?.sheets ?? []) as Array<{ properties?: { title?: string } }>)
+      .map((s) => s.properties?.title ?? "");
+
+    if (!existingTitles.includes("Tracking")) {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [{ addSheet: { properties: { title: "Tracking" } } }],
+        },
+      });
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ── Test connection ──────────────────────────────────────────────────────────────────────────
 
 export interface TestResult {
   ok: boolean;
   error?: string;
   sheetTitle?: string;
   diagnostics: {
-    authConfigured:     boolean;
+    authConfigured:      boolean;
     tokenFetchAttempted: boolean;
-    spreadsheetAccess:  boolean;
-    writeAccess:        boolean;
+    spreadsheetAccess:   boolean;
+    writeAccess:         boolean;
   };
 }
 
@@ -399,7 +490,7 @@ export async function testConnection(config?: SyncConfig): Promise<TestResult> {
   }
 }
 
-// ── Sync order ─────────────────────────────────────────────────────────────
+// ── Sync single order ───────────────────────────────────────────────────────────────────────
 
 export interface SyncResult {
   ok: boolean;
@@ -423,9 +514,7 @@ export async function syncOrderToSheet(order: Order, config?: SyncConfig): Promi
     stage = "ensure_headers";
     await ensureHeaders(sheets, sheetId, sheetTitle);
 
-    // ── Find next empty row by reading column A ────────────────────────────
-    // This replaces the old append() call which could mis-detect the table
-    // boundary and insert starting from the wrong column (e.g. column N/O).
+    // Find next empty row by reading column A
     stage = "get_next_row";
     const { nextRow, existingIds } = await getNextEmptyRow(sheets, sheetId, sheetTitle);
     console.log(`[Google Sheets] next empty row: ${nextRow}`);
@@ -436,68 +525,16 @@ export async function syncOrderToSheet(order: Order, config?: SyncConfig): Promi
       return { ok: true };
     }
 
-    // ── Build the 25-column row ──────────────────────────────────────────────
-    const itemsTitle = order.items?.map((i) => i.product_title).filter(Boolean).join(", ") || "";
-    const sizes      = order.items?.map((i) => i.size).filter(Boolean).join(", ") || "";
-    const totalQty   = order.items?.reduce((s, i) => s + (Number(i.quantity) || 0), 0) || 1;
-    const fullName   = `${order.customer_first_name ?? ""} ${order.customer_last_name ?? ""}`.trim();
+    // Build 14-column main row (no tracking fields)
+    const paddedRow = buildMainRow(order);
 
-    const colorsStr = (() => {
-      try {
-        const raw = order.items?.[0]?.colors;
-        if (!raw || raw === "[]") return "";
-        const parsed = JSON.parse(raw) as Array<{ pieceIndex?: number; color?: { label?: string }; label?: string }>;
-        return parsed
-          .map((c, i) => {
-            const label = c.color?.label ?? c.label ?? "";
-            return parsed.length > 1 ? `${i + 1}: ${label}` : label;
-          })
-          .filter(Boolean)
-          .join("، ");
-      } catch { return ""; }
-    })();
-
-    // Row values MUST match HEADERS exactly (same count and same order)
-    const row: string[] = [
-      // Cols A–N: core order data
-      order.id          ?? "",
-      new Date(order.created_at || Date.now()).toLocaleString("ar-MA"),
-      fullName,
-      order.phone       ?? "",
-      order.city        ?? "",
-      order.address     ?? "",
-      itemsTitle,
-      sizes,
-      colorsStr,
-      String(totalQty),
-      String(order.total_amount ?? 0),
-      order.status      ?? "new",
-      order.notes       ?? "",
-      order.source      ?? "direct",
-      // Cols O–Y: attribution + tracking
-      order.purchase_event_id ?? "",
-      order.pixel_status      ?? "pending",
-      order.capi_status       ?? "",
-      String(order.google_sheet_synced ?? true),
-      order.fbclid            ?? "",
-      order.fbp               ?? "",
-      order.fbc               ?? "",
-      order.utm_source        ?? "",
-      order.utm_campaign      ?? "",
-      order.landing_page      ?? "",
-      order.referrer          ?? "",
-    ];
-
-    // Pad / trim to exactly HEADERS.length values
-    const paddedRow = Array.from({ length: HEADERS.length }, (_, i) => row[i] ?? "");
-
-    // ── Write to explicit range starting from column A ─────────────────────
-    // e.g. 'Feuille 1'!A35:Y35 — guarantees data starts at column A
+    // Write to explicit range — always starts at column A
     stage = "write_row";
-    const lastCol    = columnToLetter(HEADERS.length);
+    const lastCol    = columnToLetter(MAIN_HEADERS.length); // "N"
     const writeRange = `${quoteSheet(sheetTitle)}!A${nextRow}:${lastCol}${nextRow}`;
-    console.log(`[Google Sheets] row length: ${paddedRow.length}`);
+    console.log(`[Google Sheets] main headers length: ${MAIN_HEADERS.length}`);
     console.log(`[Google Sheets] write range: ${writeRange}`);
+    console.log(`[Google Sheets] row length: ${paddedRow.length}`);
 
     await sheets.spreadsheets.values.update({
       spreadsheetId: sheetId,
@@ -509,16 +546,15 @@ export async function syncOrderToSheet(order: Order, config?: SyncConfig): Promi
 
     return { ok: true };
   } catch (err: unknown) {
-    const msg = String(err);
-    const safeMsg = msg
-      .replace(/BEGIN[^-]*PRIVATE[^-]*KEY[^-]*-+[\s\S]*?-+END[^-]*PRIVATE[^-]*KEY[^-]*-+/gi, "[KEY_REDACTED]")
+    const msg = String(err)
+      .replace(/BEGIN[^-]*PRIVATE[^-]*KEY[^-]*-+[\s\S]*?-+END[^-]*PRIVATE[^-]*KEY[^-]*/gi, "[KEY_REDACTED]")
       .slice(0, 300);
-    console.error(`[Google Sheets] syncOrderToSheet failed at stage=${stage} order=${order.id}:`, safeMsg);
-    return { ok: false, error: safeMsg, stage };
+    console.error(`[Google Sheets] syncOrderToSheet failed at stage=${stage} order=${order.id}:`, msg);
+    return { ok: false, error: msg, stage };
   }
 }
 
-// ── Update order status in sheet ───────────────────────────────────────────
+// ── Update order status in sheet ─────────────────────────────────────────────────────────────
 
 export async function updateOrderStatusInSheet(
   orderId: string,
@@ -536,7 +572,7 @@ export async function updateOrderStatusInSheet(
     const rowIndex = rows.findIndex((r) => r[0] === orderId);
     if (rowIndex === -1) return false;
 
-    // Status is column L (12th column, index 11) in the 25-column schema
+    // Status is column L (12th column, index 11) in the 14-column schema
     const statusCol = columnToLetter(12); // "L"
     await sheets.spreadsheets.values.update({
       spreadsheetId: sheetId,
@@ -551,15 +587,131 @@ export async function updateOrderStatusInSheet(
   }
 }
 
-// ── Detect shifted rows ────────────────────────────────────────────────────
-// A "shifted" row is a data row (not header) where column A is empty
-// but some other column has data — this means the order was written
-// starting from the wrong column (e.g. N or O instead of A).
+// ── Rebuild sheet from orders ──────────────────────────────────────────────────────────────
+// Clears the main sheet, writes clean 14-col headers and all orders in A:N.
+// Optionally writes tracking data to a separate "Tracking" tab (non-blocking).
+
+export interface RebuildResult {
+  ok: boolean;
+  total: number;
+  trackingTab: boolean;
+  error?: string;
+}
+
+export async function rebuildSheetFromOrders(
+  orders: Order[],
+  config?: SyncConfig
+): Promise<RebuildResult> {
+  if (!isConfigured() && !config?.sheetId) {
+    return { ok: false, total: 0, trackingTab: false, error: "Google Sheets not configured" };
+  }
+
+  try {
+    console.log("[Google Sheets] rebuild started");
+
+    const { sheets, sheetId } = await getAuthAndSheets(config);
+    const sheetTitle = await getFirstSheetTitle(sheets, sheetId);
+    const lastCol    = columnToLetter(MAIN_HEADERS.length); // "N"
+
+    // 1. Clear the main sheet completely (A:Z covers old 25-col layout)
+    const clearRange = `${quoteSheet(sheetTitle)}!A:Z`;
+    await sheets.spreadsheets.values.clear({ spreadsheetId: sheetId, range: clearRange });
+    console.log(`[Google Sheets] main sheet cleared: ${clearRange}`);
+
+    // 2. Write clean 14-column headers to A1:N1
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: sheetId,
+      range:         `${quoteSheet(sheetTitle)}!A1:${lastCol}1`,
+      valueInputOption: "USER_ENTERED",
+      requestBody:   { values: [MAIN_HEADERS] },
+    });
+    console.log(`[Google Sheets] main headers length: ${MAIN_HEADERS.length}`);
+
+    // 3. Sort orders by created_at ascending, deduplicate by id
+    const seen = new Set<string>();
+    const ordersClean = [...orders]
+      .sort((a, b) => {
+        const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return ta - tb;
+      })
+      .filter((o) => {
+        const id = (o.id ?? "").trim();
+        if (!id || seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      });
+
+    // 4. Build all rows and write in one batch API call
+    const rows = ordersClean.map(buildMainRow);
+
+    if (rows.length > 0) {
+      const dataRange = `${quoteSheet(sheetTitle)}!A2:${lastCol}${rows.length + 1}`;
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: sheetId,
+        range:         dataRange,
+        valueInputOption: "USER_ENTERED",
+        requestBody:   { values: rows },
+      });
+      console.log(`[Google Sheets] write range: ${dataRange}`);
+    }
+
+    console.log(`[Google Sheets] rebuild completed: ${rows.length} orders`);
+
+    // 5. Optional: write tracking data to "Tracking" tab (non-blocking)
+    let trackingTab = false;
+    try {
+      const hasTracking = ordersClean.some((o) =>
+        o.purchase_event_id || o.fbclid || o.fbc || o.fbp || o.utm_source || o.utm_campaign
+      );
+
+      if (hasTracking) {
+        const tabReady = await ensureTrackingTab(sheets, sheetId);
+        if (tabReady) {
+          await sheets.spreadsheets.values.clear({
+            spreadsheetId: sheetId,
+            range: "'Tracking'!A:K",
+          });
+          await sheets.spreadsheets.values.update({
+            spreadsheetId: sheetId,
+            range:         "'Tracking'!A1:K1",
+            valueInputOption: "USER_ENTERED",
+            requestBody:   { values: [TRACKING_HEADERS] },
+          });
+          const trackingRows = ordersClean.map(buildTrackingRow);
+          if (trackingRows.length > 0) {
+            await sheets.spreadsheets.values.update({
+              spreadsheetId: sheetId,
+              range:         `'Tracking'!A2:K${trackingRows.length + 1}`,
+              valueInputOption: "USER_ENTERED",
+              requestBody:   { values: trackingRows },
+            });
+          }
+          trackingTab = true;
+          console.log(`[Google Sheets] tracking tab written: ${trackingRows.length} rows`);
+        }
+      }
+    } catch (trackingErr) {
+      // Tracking tab failure is non-blocking — main rebuild still succeeds
+      console.error("[Google Sheets] tracking tab error (non-blocking):", String(trackingErr).slice(0, 200));
+    }
+
+    return { ok: true, total: rows.length, trackingTab };
+  } catch (err: unknown) {
+    const msg = String(err)
+      .replace(/BEGIN[^-]*PRIVATE[^-]*KEY[^-]*-+[\s\S]*?-+END[^-]*PRIVATE[^-]*KEY[^-]*/gi, "[KEY_REDACTED]")
+      .slice(0, 300);
+    console.error("[Google Sheets] rebuildSheetFromOrders failed:", msg);
+    return { ok: false, total: 0, trackingTab: false, error: msg };
+  }
+}
+
+// ── Detect shifted rows ────────────────────────────────────────────────────────────────────────
 
 export interface ShiftedRowInfo {
-  row:          number;   // 1-based sheet row number
-  firstDataCol: string;   // e.g. "N" or "O"
-  firstValue:   string;   // the value in firstDataCol (usually the order ID)
+  row:          number;
+  firstDataCol: string;
+  firstValue:   string;
 }
 
 export async function detectShiftedRows(config?: SyncConfig): Promise<{
@@ -572,7 +724,6 @@ export async function detectShiftedRows(config?: SyncConfig): Promise<{
     const { sheets, sheetId } = await getAuthAndSheets(config);
     const sheetTitle = await getFirstSheetTitle(sheets, sheetId);
 
-    // Read enough columns to catch any shift (up to column AZ = 52)
     const wideLastCol = columnToLetter(52);
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: sheetId,
@@ -589,7 +740,6 @@ export async function detectShiftedRows(config?: SyncConfig): Promise<{
       const colA = (row[0] ?? "").trim();
       if (colA) return; // col A has data → correctly placed
 
-      // Find first non-empty column
       const firstDataIdx = row.findIndex((c) => c && c.trim());
       if (firstDataIdx > 0) {
         shiftedRows.push({
@@ -610,10 +760,7 @@ export async function detectShiftedRows(config?: SyncConfig): Promise<{
   }
 }
 
-// ── Repair shifted rows ────────────────────────────────────────────────────
-// For each shifted row: reads the data from the wrong columns,
-// extracts 25 values starting from firstDataIdx, writes to A{row}:Y{row},
-// then clears the old columns (if they extended beyond Y).
+// ── Repair shifted rows ────────────────────────────────────────────────────────────────────────
 
 export async function repairShiftedRows(config?: SyncConfig): Promise<{
   ok: boolean;
@@ -623,7 +770,7 @@ export async function repairShiftedRows(config?: SyncConfig): Promise<{
 }> {
   const errors: string[] = [];
   let repaired = 0;
-  let skipped  = 0;
+  const skipped  = 0;
 
   try {
     const { sheets, sheetId } = await getAuthAndSheets(config);
@@ -647,8 +794,8 @@ export async function repairShiftedRows(config?: SyncConfig): Promise<{
       const firstDataIdx = row.findIndex((c) => c && c.trim());
       if (firstDataIdx <= 0) continue; // completely empty row
 
-      // Extract 25 values from the shifted position
-      const extracted = Array.from({ length: HEADERS.length }, (_, i) =>
+      // Extract MAIN_HEADERS.length values from the shifted position
+      const extracted = Array.from({ length: MAIN_HEADERS.length }, (_, i) =>
         row[firstDataIdx + i] ?? ""
       );
 
@@ -657,7 +804,7 @@ export async function repairShiftedRows(config?: SyncConfig): Promise<{
       await sheets.spreadsheets.values.clear({ spreadsheetId: sheetId, range: clearRange });
 
       // Write extracted data starting from column A
-      const lastCol    = columnToLetter(HEADERS.length);
+      const lastCol    = columnToLetter(MAIN_HEADERS.length); // "N"
       const writeRange = `${quoteSheet(sheetTitle)}!A${rowNum}:${lastCol}${rowNum}`;
       await sheets.spreadsheets.values.update({
         spreadsheetId: sheetId,
