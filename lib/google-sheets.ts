@@ -61,20 +61,20 @@ export function columnToLetter(n: number): string {
 // and are optionally written to a separate "Tracking" tab on rebuild.
 
 const MAIN_HEADERS = [
-  "\u0631\u0642\u0645 \u0627\u0644\u0637\u0644\u0628",    // A
-  "\u0627\u0644\u062a\u0627\u0631\u064a\u062e",             // B
-  "\u0627\u0644\u0627\u0633\u0645 \u0627\u0644\u0643\u0627\u0645\u0644",  // C
-  "\u0627\u0644\u0647\u0627\u062a\u0641",                    // D
-  "\u0627\u0644\u0645\u062f\u064a\u0646\u0629",             // E
-  "\u0627\u0644\u0639\u0646\u0648\u0627\u0646",             // F
-  "\u0627\u0644\u0645\u0646\u062a\u062c",                    // G
-  "\u0627\u0644\u0645\u0642\u0627\u0633",                    // H
-  "\u0627\u0644\u0623\u0644\u0648\u0627\u0646",             // I
-  "\u0627\u0644\u0643\u0645\u064a\u0629",                    // J
-  "\u0627\u0644\u0645\u062c\u0645\u0648\u0639",             // K
-  "\u0627\u0644\u062d\u0627\u0644\u0629",                    // L
-  "\u0645\u0644\u0627\u062d\u0638\u0629",                    // M
-  "\u0627\u0644\u0645\u0635\u062f\u0631",                    // N
+  "رقم الطلب",    // A
+  "التاريخ",             // B
+  "الاسم الكامل",  // C
+  "الهاتف",                    // D
+  "المدينة",             // E
+  "العنوان",             // F
+  "المنتج",                    // G
+  "المقاس",                    // H
+  "الألوان",             // I
+  "الكمية",                    // J
+  "المجموع",             // K
+  "الحالة",                    // L
+  "ملاحظة",                    // M
+  "المصدر",                    // N
 ];
 
 // ── Tracking tab headers (11 columns) ────────────────────────────────────────────────
@@ -115,7 +115,7 @@ function buildMainRow(order: Order): string[] {
           return parsed.length > 1 ? `${idx + 1}: ${label}` : label;
         })
         .filter(Boolean)
-        .join("\u060c ");
+        .join("، ");
     } catch { return ""; }
   })();
 
@@ -243,9 +243,9 @@ export function cleanSheetId(raw: string): string {
 }
 
 export function sheetIdWarning(id: string): string | null {
-  if (!id) return "\u0641\u0627\u0631\u063a";
-  if (id.length < 20) return `\u0642\u0635\u064a\u0631 \u062c\u062f\u0627\u064b (${id.length} \u062d\u0631\u0641) \u2014 \u062a\u062d\u0642\u0642 \u0645\u0646 \u0627\u0644\u0642\u064a\u0645\u0629`;
-  if (id.length > 60) return `\u0637\u0648\u064a\u0644 \u062c\u062f\u0627\u064b (${id.length} \u062d\u0631\u0641) \u2014 \u0631\u0628\u0645\u0627 \u064a\u062d\u062a\u0648\u064a \u0639\u0644\u0649 URL \u0623\u0648 \u062a\u0643\u0631\u0627\u0631`;
+  if (!id) return "فارغ";
+  if (id.length < 20) return `قصير جداً (${id.length} حرف) — تحقق من القيمة`;
+  if (id.length > 60) return `طويل جداً (${id.length} حرف) — ربما يحتوي على URL أو تكرار`;
   return null;
 }
 

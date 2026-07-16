@@ -398,6 +398,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, order_id: newOrder.id });
   } catch (err) {
     console.error("[Orders API] Unexpected error:", String(err).slice(0, 300));
-    return NextResponse.json({ success: false, error: "\u062e\u0637\u0623 \u062f\u0627\u062e\u0644\u064a \u0641\u064a \u0627\u0644\u062e\u0627\u062f\u0645" }, { status: 500 });
+    return NextResponse.json({ success: false, error: "خطأ داخلي في الخادم" }, { status: 500 });
   }
 }
