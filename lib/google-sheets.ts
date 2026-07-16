@@ -123,7 +123,7 @@ function buildMainRow(order: Order): string[] {
     order.id          ?? "",                                                    // A
     new Date(order.created_at || Date.now()).toLocaleString("ar-MA"),          // B
     fullName,                                                                   // C
-    order.phone       ?? "",                                                    // D
+    order.phone ? "'" + String(order.phone) : "",  // D - leading apostrophe keeps 06.. as text (Moroccan leading zero)
     order.city        ?? "",                                                    // E
     order.address     ?? "",                                                    // F
     itemsTitle,                                                                 // G
@@ -388,6 +388,25 @@ async function ensureTrackingTab(sheets: SheetsClient, spreadsheetId: string): P
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Read all order IDs currently present in column A of the main sheet.
+ * Used by the compare endpoint to find DB orders missing from the sheet.
+ */
+export async function getSheetOrderIds(config?: SyncConfig): Promise<{
+  ok: boolean;
+  ids: string[];
+  error?: string;
+}> {
+  try {
+    const { sheets, sheetId } = await getAuthAndSheets(config);
+    const sheetTitle = await getFirstSheetTitle(sheets, sheetId);
+    const { existingIds } = await getNextEmptyRow(sheets, sheetId, sheetTitle);
+    return { ok: true, ids: existingIds.filter(Boolean) };
+  } catch (err) {
+    return { ok: false, ids: [], error: String(err).slice(0, 200) };
   }
 }
 

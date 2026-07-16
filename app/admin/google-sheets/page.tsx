@@ -45,6 +45,18 @@ export default function AdminGoogleSheetsPage() {
     total: number;
     trackingTab: boolean;
   } | null>(null);
+  const [comparing, setComparing] = useState(false);
+  const [fixingMissing, setFixingMissing] = useState(false);
+  const [compareResult, setCompareResult] = useState<{
+    db_count: number;
+    sheet_count: number;
+    missing: { order_id: string; customer: string; total: number; source: string; created_at: string }[];
+  } | null>(null);
+  const [fixResult, setFixResult] = useState<{
+    synced: number;
+    failed: number;
+    failures?: { order_id: string; error: string }[];
+  } | null>(null);
   const [syncResult, setSyncResult] = useState<{
     synced: number;
     failed: number;
@@ -187,6 +199,64 @@ export default function AdminGoogleSheetsPage() {
       }
     } catch { toast.error("\u062e\u0637\u0623 \u0641\u064a \u0627\u0644\u0627\u062a\u0635\u0627\u0644"); }
     setRebuilding(false);
+  };
+
+  // مقارنة وإصلاح Google Sheet — compare DB orders vs sheet, sync only missing
+  const compareSheet = async () => {
+    if (!canTest) { toast.error("Google Sheets غير مهيأ"); return; }
+    if (!HAS_SUPABASE) { toast.error("خاصك تربط Supabase"); return; }
+    setComparing(true);
+    setCompareResult(null);
+    setFixResult(null);
+    try {
+      const r = await fetch("/api/admin/google-sheets/compare");
+      const d = await r.json() as {
+        success: boolean;
+        error?: string;
+        db_count?: number;
+        sheet_count?: number;
+        missing?: { order_id: string; customer: string; total: number; source: string; created_at: string }[];
+      };
+      if (d.success) {
+        setCompareResult({
+          db_count:    d.db_count ?? 0,
+          sheet_count: d.sheet_count ?? 0,
+          missing:     d.missing ?? [],
+        });
+        if ((d.missing?.length ?? 0) === 0) toast.success("كل الطلبات موجودة في الورقة");
+        else toast(`${d.missing!.length} طلب ناقص في الورقة`, { icon: "⚠️" });
+      } else {
+        toast.error(d.error || "خطأ في المقارنة");
+      }
+    } catch { toast.error("خطأ في الاتصال"); }
+    setComparing(false);
+  };
+
+  const fixMissing = async () => {
+    if (!compareResult || compareResult.missing.length === 0) return;
+    if (!confirm(`سيتم إرسال ${compareResult.missing.length} طلب ناقص إلى Google Sheet. الطلبات الموجودة لن تتكرر. هل تريد المتابعة؟`)) return;
+    setFixingMissing(true);
+    setFixResult(null);
+    try {
+      const r = await fetch("/api/admin/google-sheets/compare", { method: "POST" });
+      const d = await r.json() as {
+        success: boolean;
+        error?: string;
+        synced?: number;
+        failed?: number;
+        failures?: { order_id: string; error: string }[];
+      };
+      if (d.success) {
+        setFixResult({ synced: d.synced ?? 0, failed: d.failed ?? 0, failures: d.failures });
+        if ((d.failed ?? 0) === 0) toast.success(`تمت مزامنة ${d.synced ?? 0} طلب ناقص`);
+        else toast.error(`${d.synced} نجح، ${d.failed} فشل`);
+        // Refresh the comparison after fixing
+        setCompareResult(null);
+      } else {
+        toast.error(d.error || "خطأ في الإصلاح");
+      }
+    } catch { toast.error("خطأ في الاتصال"); }
+    setFixingMissing(false);
   };
 
   const detectRepair = async (mode: "detect" | "fix") => {
@@ -443,6 +513,77 @@ export default function AdminGoogleSheetsPage() {
           <RotateCcw className={"h-4 w-4 " + (rebuilding ? "animate-spin" : "")} />
           {rebuilding ? "\u062c\u0627\u0631\u064a \u0625\u0639\u0627\u062f\u0629 \u0627\u0644\u0628\u0646\u0627\u0621..." : "\u0625\u0639\u0627\u062f\u0629 \u0628\u0646\u0627\u0621 Google Sheet"}
         </button>
+      </div>
+
+      {/* Compare + fix missing orders */}
+      <div className="bg-white border border-gray-200 p-5 mb-4">
+        <h2 className="font-black text-brand-navy mb-1">مقارنة وإصلاح Google Sheet</h2>
+        <p className="text-brand-gray text-sm mb-4">
+          يقارن الطلبات في قاعدة البيانات مع الورقة، ويظهر الطلبات الناقصة، ثم يزامن الناقص فقط بدون تكرار.
+        </p>
+
+        {compareResult && (
+          <div className={"mb-4 p-3 border text-sm " + (compareResult.missing.length === 0 ? "bg-green-50 border-green-200 text-green-800" : "bg-yellow-50 border-yellow-200 text-yellow-800")}>
+            <p className="font-bold mb-1">
+              قاعدة البيانات: {compareResult.db_count} طلب — الورقة: {compareResult.sheet_count} صف — الناقص: {compareResult.missing.length}
+            </p>
+            {compareResult.missing.length > 0 && (
+              <ul className="text-xs space-y-0.5 mt-2">
+                {compareResult.missing.map((m) => (
+                  <li key={m.order_id} className="border-b border-yellow-100 pb-1 last:border-0">
+                    <span className="font-mono">{m.order_id.slice(0, 8)}…</span>
+                    {" — "}
+                    <span className="font-bold">{m.customer || "بدون اسم"}</span>
+                    {" — "}
+                    <span>{m.total} درهم</span>
+                    {" — "}
+                    <span className="font-mono text-yellow-700">[{m.source}]</span>
+                    {" — "}
+                    <span dir="ltr">{m.created_at ? new Date(m.created_at).toLocaleString("ar-MA") : ""}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {fixResult && (
+          <div className={"mb-4 p-3 border text-sm " + (fixResult.failed === 0 ? "bg-green-50 border-green-200 text-green-800" : "bg-red-50 border-red-200 text-red-800")}>
+            <p className="font-bold">تمت المزامنة: {fixResult.synced} نجح، {fixResult.failed} فشل</p>
+            {fixResult.failures && fixResult.failures.length > 0 && (
+              <ul className="text-xs mt-1 space-y-0.5">
+                {fixResult.failures.map((f) => (
+                  <li key={f.order_id}>
+                    <span className="font-mono">{f.order_id.slice(0, 8)}…</span> — {f.error}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        <div className="flex gap-2 flex-wrap">
+          <button
+            onClick={compareSheet}
+            disabled={comparing || fixingMissing || !canTest || !HAS_SUPABASE}
+            title={!canTest ? "خاصك تهيئ Google Sheets أولاً" : ""}
+            className="flex items-center gap-2 border border-brand-navy text-brand-navy font-bold px-4 py-2 text-sm hover:bg-brand-navy hover:text-white disabled:opacity-50 transition-colors"
+          >
+            <RefreshCw className={"h-3.5 w-3.5 " + (comparing ? "animate-spin" : "")} />
+            {comparing ? "جاري المقارنة..." : "مقارنة الطلبات مع الورقة"}
+          </button>
+
+          {compareResult && compareResult.missing.length > 0 && (
+            <button
+              onClick={fixMissing}
+              disabled={fixingMissing || comparing}
+              className="flex items-center gap-2 bg-brand-gold text-white font-bold px-4 py-2 text-sm hover:bg-opacity-85 disabled:opacity-50 transition-colors"
+            >
+              <Wrench className={"h-3.5 w-3.5 " + (fixingMissing ? "animate-spin" : "")} />
+              {fixingMissing ? "جاري المزامنة..." : `مزامنة ${compareResult.missing.length} طلب ناقص`}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Bulk sync */}

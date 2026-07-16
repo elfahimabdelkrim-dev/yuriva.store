@@ -138,6 +138,9 @@ CREATE TABLE orders (
   internal_notes TEXT,
   is_duplicate BOOLEAN DEFAULT false,
   is_blacklisted BOOLEAN DEFAULT false,
+  whatsapp_notify_status  TEXT DEFAULT NULL,
+  whatsapp_notify_error   TEXT DEFAULT NULL,
+  whatsapp_notify_sent_at TIMESTAMPTZ DEFAULT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -399,3 +402,20 @@ CREATE TRIGGER products_updated_at BEFORE UPDATE ON products FOR EACH ROW EXECUT
 CREATE TRIGGER categories_updated_at BEFORE UPDATE ON categories FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER orders_updated_at BEFORE UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER store_settings_updated_at BEFORE UPDATE ON store_settings FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- =============================================
+-- TRACKING PIXELS (dynamic pixel management)
+-- =============================================
+CREATE TABLE IF NOT EXISTS tracking_pixels (
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  provider    TEXT        NOT NULL DEFAULT 'meta',
+  label       TEXT        NOT NULL,
+  pixel_id    TEXT        NOT NULL,
+  is_active   BOOLEAN     NOT NULL DEFAULT true,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO tracking_pixels (provider, label, pixel_id, is_active) VALUES
+  ('meta', 'Main Pixel',   '4569111183412330', true),
+  ('meta', 'Second Pixel', '1162700877684124', true);

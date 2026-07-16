@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     const { order, items } = body;
     const metaTracking = body.meta ?? {};
 
-    // ── Supabase ───────────────────────────────────────────────────────────
+    // -- Supabase -----------------------------------------------------------
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
       return NextResponse.json({ success: true, order_id: `ORD-${Date.now()}` });
     }
@@ -71,6 +71,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: error?.message }, { status: 500 });
     }
 
+    console.log(`[ORDER_CREATED] order_id=${newOrder.id} source=${order.source ?? "direct"} total=${order.total_amount ?? 0}`);
+    if (is_duplicate) {
+      // Order is still created (flagged is_duplicate) - logged for visibility
+      console.warn(`[DUPLICATE_ORDER_BLOCKED] order_id=${newOrder.id} phone_repeat_within_24h=true (order saved, flagged is_duplicate)`);
+    }
+
     if (items.length > 0) {
       await supabase.from("order_items").insert(
         items.map((item) => ({ ...item, order_id: newOrder.id }))
@@ -85,14 +91,22 @@ export async function POST(req: NextRequest) {
       changed_by: "system",
     });
 
-    // ── Google Sheets + Meta CAPI — parallel, both awaited ────────────────
+    // -- Google Sheets + Meta CAPI - parallel, both awaited ------------------
     const pixelId     = process.env.NEXT_PUBLIC_META_PIXEL_ID;
     const accessToken = process.env.META_ACCESS_TOKEN;
     // event_id is deterministic: purchase_${orderId}
-    // This matches the browser pixel event_id fired on the thank-you page,
-    // so Meta can deduplicate the CAPI and browser events for the same order.
+    // This matches the browser pixel eventID fired on the thank-you page,
+    // so Meta deduplicates the CAPI and browser events for the same order.
     const capiEventId = `purchase_${newOrder.id}`;
-    const canSendCapi = !!(pixelId && accessToken);
+
+    // WhatsApp leads are NOT purchases - never send Purchase for them.
+    // Only real COD orders (direct_cod / direct) send CAPI Purchase.
+    const isWhatsAppLead = String(order.source ?? "").toLowerCase().startsWith("whatsapp");
+    const canSendCapi    = !!(pixelId && accessToken) && !isWhatsAppLead;
+
+    if (isWhatsAppLead) {
+      console.log(`[Meta CAPI] Purchase SKIPPED for WhatsApp lead order_id=${newOrder.id} source=${order.source}`);
+    }
 
     // Enrich fbc: if client sent fbc use it; else build from fbclid per Meta spec
     const fbclid = metaTracking.fbclid;
@@ -107,18 +121,26 @@ export async function POST(req: NextRequest) {
       messages?: string[];
       fbtrace_id?: string;
       error?: string;
+      skipped?: boolean;
     };
 
+    // New idempotency/tracking columns may not exist until the DB migration runs.
+    // All updates touching them are best-effort and separated from legacy updates.
+    const sb = supabase as any; // eslint-disable-line
+
+    let sheetRetryCount = 0;
+
     const [sheetResult, capiResult] = await Promise.allSettled([
-      // ── Google Sheets ──────────────────────────────────────────────────
+      // -- Google Sheets -----------------------------------------------------
       (async (): Promise<SyncResult> => {
         try {
           const { isConfigured, syncOrderToSheet } = await import("@/lib/google-sheets");
           if (!isConfigured()) {
-            console.log("[Google Sheets] Not configured — skipping order", newOrder.id);
+            console.log("[Google Sheets] Not configured - skipping order", newOrder.id);
             return { ok: true };
           }
-          // Merge attribution data into order for Google Sheet row
+          console.log(`[GOOGLE_SHEET_SYNC_STARTED] order_id=${newOrder.id}`);
+          // Merge attribution data into order for the sync layer
           const orderWithItems = {
             ...newOrder,
             items,
@@ -129,21 +151,88 @@ export async function POST(req: NextRequest) {
             landing_page: metaTracking.landing_page,
             referrer:     metaTracking.referrer,
           } as Order;
-          return withTimeout<SyncResult>(
+
+          let result = await withTimeout<SyncResult>(
             syncOrderToSheet(orderWithItems),
             8000,
             { ok: false, error: "timeout", stage: "timeout" }
           );
+
+          // One automatic retry for fast (non-timeout) failures - e.g. transient
+          // network/auth errors. Timeout failures are left to sync-all/compare
+          // to keep the request within serverless limits.
+          if (!result.ok && result.stage !== "timeout") {
+            sheetRetryCount = 1;
+            console.warn(`[Google Sheets] first attempt failed (stage=${result.stage}) - retrying once order_id=${newOrder.id}`);
+            result = await withTimeout<SyncResult>(
+              syncOrderToSheet(orderWithItems),
+              5000,
+              { ok: false, error: "timeout", stage: "timeout_retry" }
+            );
+          }
+          return result;
         } catch (err) {
           return { ok: false, error: String(err).slice(0, 200) };
         }
       })(),
 
-      // ── Meta CAPI Purchase ─────────────────────────────────────────────
-      // Server-side — fires even when mobile browser blocks window.fbq.
+      // -- Meta CAPI Purchase --------------------------------------------------
+      // Server-side - fires even when mobile browser blocks window.fbq.
       // IMPORTANT: testEventCode is NOT passed for real orders.
       (async (): Promise<CapiResultLocal> => {
-        if (!canSendCapi) return { ok: true };
+        if (!canSendCapi) return { ok: true, skipped: true };
+
+        // -- Backend idempotency claim - state machine -------------------------
+        // capi_status flow: pending(null) -> processing -> sent | failed
+        // Atomic claim: move pending/failed -> processing. Rows already in
+        // 'processing' or 'sent' (or with meta_purchase_sent=true) are NOT
+        // claimable - prevents concurrent duplicate sends.
+        // meta_purchase_sent is set to true ONLY after Meta accepts the event.
+        try {
+          const { data: claimRows, error: claimErr } = await sb
+            .from("orders")
+            .update({ capi_status: "processing" })
+            .eq("id", newOrder.id)
+            .or("capi_status.is.null,capi_status.eq.pending,capi_status.eq.failed")
+            .or("meta_purchase_sent.is.null,meta_purchase_sent.eq.false")
+            .select("id");
+
+          if (claimErr) {
+            // Column missing (migration pending) - proceed; order was just inserted
+            console.warn("[Meta CAPI] idempotency claim unavailable (run DB migration):", String(claimErr.message).slice(0, 120));
+          } else if (!claimRows || claimRows.length === 0) {
+            console.log(`[META_PURCHASE_ALREADY_SENT] order_id=${newOrder.id} - already sent or processing, server Purchase skipped`);
+            return { ok: true, skipped: true };
+          }
+        } catch { /* best-effort - proceed */ }
+
+        // Persist final outcome of the CAPI send (best-effort - columns may
+        // not exist until the DB migration runs).
+        const persistCapiOutcome = (result: CapiResultLocal): void => {
+          try {
+            if (result.ok) {
+              sb.from("orders")
+                .update({
+                  capi_status:           "sent",
+                  meta_purchase_sent:    true,
+                  meta_purchase_sent_at: new Date().toISOString(),
+                  meta_purchase_error:   null,
+                })
+                .eq("id", newOrder.id)
+                .then(() => { /* ignored */ });
+            } else {
+              // failed -> meta_purchase_sent stays false -> a later retry is allowed
+              sb.from("orders")
+                .update({
+                  capi_status:         "failed",
+                  meta_purchase_sent:  false,
+                  meta_purchase_error: (result.error ?? "unknown").slice(0, 300),
+                })
+                .eq("id", newOrder.id)
+                .then(() => { /* ignored */ });
+            }
+          } catch { /* best-effort */ }
+        };
 
         const rawName = String(order.customer_first_name ?? "").trim();
         const rawLast = String(order.customer_last_name  ?? "").trim();
@@ -167,7 +256,7 @@ export async function POST(req: NextRequest) {
           const firstItem = items[0];
           const numItems  = items.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
 
-          return withTimeout<CapiResultLocal>(
+          const capiSendResult = await withTimeout<CapiResultLocal>(
             sendCapiPurchase({
               pixelId,
               accessToken,
@@ -190,13 +279,17 @@ export async function POST(req: NextRequest) {
             6000,
             { ok: false, error: "capi_timeout" }
           );
+          persistCapiOutcome(capiSendResult);
+          return capiSendResult;
         } catch (err) {
-          return { ok: false, error: String(err).slice(0, 200) };
+          const failResult: CapiResultLocal = { ok: false, error: String(err).slice(0, 200) };
+          persistCapiOutcome(failResult);
+          return failResult;
         }
       })(),
     ]);
 
-    // ── Log results + update Supabase ──────────────────────────────────────
+    // -- Log results + update Supabase -----------------------------------------
     const sheet = sheetResult.status === "fulfilled"
       ? sheetResult.value
       : { ok: false, error: "promise_rejected" } as SyncResult;
@@ -205,33 +298,46 @@ export async function POST(req: NextRequest) {
       ? capiResult.value
       : { ok: false, error: "promise_rejected" } as CapiResultLocal;
 
-    // Google Sheets + attribution status update (non-blocking)
-    // purchase_event_id / capi_status columns silently fail if not yet migrated in DB
+    // 1) Legacy columns update - MUST always succeed (columns exist since v1)
     supabase
       .from("orders")
       .update({
         google_sheet_synced: sheet.ok,
         google_sheet_error:  sheet.ok ? null : ((sheet as SyncResult).error ?? "sync_failed").slice(0, 200),
-        purchase_event_id:   capiEventId,
-        capi_status:         canSendCapi ? (capi.ok ? "sent" : "failed") : "skipped",
       })
       .eq("id", newOrder.id)
       .then(() => { /* intentionally ignored */ });
 
+    // 2) New tracking columns update - best-effort, separate call so a missing
+    //    column NEVER breaks the legacy google_sheet_synced update above.
+    //    CAPI outcome fields (capi_status/meta_purchase_*) are NOT touched here -
+    //    they are owned by the state machine inside the CAPI send block.
+    sb
+      .from("orders")
+      .update({
+        google_sheet_synced_at:   sheet.ok ? new Date().toISOString() : null,
+        google_sheet_retry_count: sheetRetryCount,
+        purchase_event_id:        capiEventId,
+        ...(canSendCapi ? {} : { capi_status: "skipped" }),
+      })
+      .eq("id", newOrder.id)
+      .then(() => { /* best-effort - ignored if migration not yet run */ });
+
     if (!sheet.ok) {
-      console.error("[Google Sheets] Failed for order", newOrder.id, ":", (sheet as SyncResult).error);
+      console.error(`[GOOGLE_SHEET_SYNC_FAILED] order_id=${newOrder.id} stage=${(sheet as SyncResult).stage} error=${(sheet as SyncResult).error}`);
     } else {
-      console.log("[Google Sheets] Order", newOrder.id, "synced OK");
+      console.log(`[GOOGLE_SHEET_SYNC_SUCCESS] order_id=${newOrder.id}`);
     }
 
     if (canSendCapi) {
-      if (capi.ok && (capi.eventsReceived ?? 0) >= 1) {
+      if (capi.skipped) {
+        // already logged META_PURCHASE_ALREADY_SENT inside the claim block
+      } else if (capi.ok && (capi.eventsReceived ?? 0) >= 1) {
         console.log(
-          "[Meta CAPI] Purchase accepted by Meta",
+          `[META_SERVER_PURCHASE_SENT] order_id=${newOrder.id}`,
+          "event_id=" + capiEventId,
           "events_received=" + capi.eventsReceived,
-          "fbtrace_id=" + (capi.fbtrace_id ?? "n/a"),
-          "order=" + newOrder.id,
-          "event_id=" + capiEventId
+          "fbtrace_id=" + (capi.fbtrace_id ?? "n/a")
         );
       } else if (!capi.ok && capi.eventsReceived === 0) {
         console.warn(
@@ -248,16 +354,15 @@ export async function POST(req: NextRequest) {
         );
       }
     } else if (pixelId && !accessToken) {
-      console.log("[Meta CAPI] META_ACCESS_TOKEN not set — browser Pixel only for order", newOrder.id);
+      console.log("[Meta CAPI] META_ACCESS_TOKEN not set - browser Pixel only for order", newOrder.id);
     }
 
-    // ── WhatsApp Admin Notification — fire-and-forget ─────────────────────
+    // -- WhatsApp Admin Notification - fire-and-forget --------------------------
     // Runs AFTER response is returned so customer is never blocked.
-    // Catches all errors internally — order success is guaranteed.
+    // Catches all errors internally - order success is guaranteed.
     const orderForNotify = { ...newOrder } as Order & { id: string };
     const itemsForNotify = [...items];
 
-    // Use setImmediate/Promise to avoid blocking the HTTP response
     Promise.resolve().then(async () => {
       try {
         const { sendWhatsAppOrderNotification } = await import("@/lib/whatsapp-notify");
@@ -268,7 +373,6 @@ export async function POST(req: NextRequest) {
         );
 
         if (waResult.error === "disabled") {
-          // Not configured — silent skip
           return;
         }
 
@@ -276,7 +380,6 @@ export async function POST(req: NextRequest) {
         const waSentAt   = waResult.ok ? new Date().toISOString() : null;
         const waError    = waResult.ok ? null : (waResult.error ?? "unknown").slice(0, 300);
 
-        // Persist notification status (non-blocking, best-effort)
         supabase
           .from("orders")
           .update({
@@ -288,7 +391,6 @@ export async function POST(req: NextRequest) {
           .then(() => { /* ignored */ });
 
       } catch (err) {
-        // WhatsApp notify must NEVER break order flow
         console.error("[WA Notify] Top-level error (order still saved)", newOrder.id, String(err).slice(0, 200));
       }
     });
@@ -296,6 +398,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, order_id: newOrder.id });
   } catch (err) {
     console.error("[Orders API] Unexpected error:", String(err).slice(0, 300));
-    return NextResponse.json({ success: false, error: "خطأ داخلي في الخادم" }, { status: 500 });
+    return NextResponse.json({ success: false, error: "\u062e\u0637\u0623 \u062f\u0627\u062e\u0644\u064a \u0641\u064a \u0627\u0644\u062e\u0627\u062f\u0645" }, { status: 500 });
   }
 }
