@@ -220,3 +220,86 @@ export async function sendCapiPurchase(params: CapiPurchaseParams): Promise<Capi
     return { ok: false, error: msg };
   }
 }
+
+
+// ── Lead event (WhatsApp leads) ──────────────────────────────────────────────
+// WhatsApp leads must NEVER send Purchase. They may send a Lead event with
+// event_id = lead_<database_order_id> so ad optimization still sees the signal.
+
+export interface CapiLeadParams {
+  pixelId: string;
+  accessToken: string;
+  orderId: string;
+  phone?: string;
+  firstName?: string;
+  lastName?: string;
+  city?: string;
+  clientIp?: string;
+  userAgent?: string;
+  fbp?: string;
+  fbc?: string;
+  eventSourceUrl?: string;
+}
+
+export async function sendCapiLead(params: CapiLeadParams): Promise<CapiResult> {
+  const {
+    pixelId, accessToken, orderId,
+    phone, firstName, lastName, city, clientIp, userAgent, fbp, fbc, eventSourceUrl,
+  } = params;
+
+  const eventTime = Math.floor(Date.now() / 1000);
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://yuriva.store";
+
+  const userData: Record<string, string> = {};
+  if (phone) {
+    const hashed = hashPhone(phone);
+    if (hashed) userData.ph = hashed;
+  }
+  if (firstName) userData.fn = hashName(firstName);
+  if (lastName)  userData.ln = hashName(lastName);
+  if (city)      userData.ct = hashCity(city);
+  userData.country = sha256("ma");
+  if (clientIp)  userData.client_ip_address = clientIp;
+  if (userAgent) userData.client_user_agent = userAgent;
+  if (fbp)       userData.fbp = fbp;
+  if (fbc)       userData.fbc = fbc;
+
+  const requestBody = {
+    data: [{
+      event_name: "Lead",
+      event_time: eventTime,
+      event_id: `lead_${orderId}`,
+      action_source: "website",
+      event_source_url: eventSourceUrl || siteUrl,
+      user_data: userData,
+    }],
+    access_token: accessToken,
+  };
+
+  try {
+    const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${encodeURIComponent(pixelId)}/events`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
+    });
+
+    let respJson: { events_received?: number; messages?: string[]; fbtrace_id?: string; error?: { message?: string } } = {};
+    try { respJson = await resp.json() as typeof respJson; } catch {
+      return { ok: false, error: `HTTP ${resp.status}: failed to parse Meta response JSON` };
+    }
+
+    const eventsReceived = respJson.events_received ?? 0;
+    if (!resp.ok || eventsReceived === 0) {
+      const safeMsg = (respJson.error?.message ?? respJson.messages?.join("; ") ?? "events_received=0")
+        .replace(/"access_token"\s*:\s*"[^"]*"/g, '"access_token":"[REDACTED]"')
+        .slice(0, 300);
+      return { ok: false, eventsReceived, fbtrace_id: respJson.fbtrace_id, error: safeMsg };
+    }
+
+    return { ok: true, eventsReceived, fbtrace_id: respJson.fbtrace_id };
+  } catch (err: unknown) {
+    const msg = String(err).replace(/access_token=[^&\s]*/gi, "access_token=[REDACTED]").slice(0, 200);
+    return { ok: false, error: msg };
+  }
+}

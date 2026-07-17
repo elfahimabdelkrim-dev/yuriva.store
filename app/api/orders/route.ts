@@ -99,13 +99,16 @@ export async function POST(req: NextRequest) {
     // so Meta deduplicates the CAPI and browser events for the same order.
     const capiEventId = `purchase_${newOrder.id}`;
 
-    // WhatsApp leads are NOT purchases - never send Purchase for them.
-    // Only real COD orders (direct_cod / direct) send CAPI Purchase.
-    const isWhatsAppLead = String(order.source ?? "").toLowerCase().startsWith("whatsapp");
-    const canSendCapi    = !!(pixelId && accessToken) && !isWhatsAppLead;
+    // Shared eligibility rules - lib/order-validation.ts is the single source
+    // of truth for what counts as a purchase vs a lead vs test/admin.
+    const { isMetaPurchaseEligible, isWhatsAppLead: isWaLead } = await import("@/lib/order-validation");
+    const fullOrder      = { ...newOrder, items } as Order;
+    const purchaseEligible = isMetaPurchaseEligible(fullOrder);
+    const whatsappLead     = isWaLead(fullOrder);
+    const canSendCapi      = !!(pixelId && accessToken) && purchaseEligible;
 
-    if (isWhatsAppLead) {
-      console.log(`[Meta CAPI] Purchase SKIPPED for WhatsApp lead order_id=${newOrder.id} source=${order.source}`);
+    if (!purchaseEligible && pixelId && accessToken) {
+      console.log(`[Meta CAPI] Purchase SKIPPED (not eligible) order_id=${newOrder.id} source=${order.source} whatsapp_lead=${whatsappLead}`);
     }
 
     // Enrich fbc: if client sent fbc use it; else build from fbclid per Meta spec
@@ -140,6 +143,8 @@ export async function POST(req: NextRequest) {
             return { ok: true };
           }
           console.log(`[GOOGLE_SHEET_SYNC_STARTED] order_id=${newOrder.id}`);
+          // sheet_status: pending -> processing (best-effort, column may not exist yet)
+          sb.from("orders").update({ sheet_status: "processing" }).eq("id", newOrder.id).then(() => {});
           // Merge attribution data into order for the sync layer
           const orderWithItems = {
             ...newOrder,
@@ -191,7 +196,7 @@ export async function POST(req: NextRequest) {
         try {
           const { data: claimRows, error: claimErr } = await sb
             .from("orders")
-            .update({ capi_status: "processing" })
+            .update({ capi_status: "processing", capi_attempts: Number(newOrder.capi_attempts ?? 0) + 1 })
             .eq("id", newOrder.id)
             .or("capi_status.is.null,capi_status.eq.pending,capi_status.eq.failed")
             .or("meta_purchase_sent.is.null,meta_purchase_sent.eq.false")
@@ -317,6 +322,10 @@ export async function POST(req: NextRequest) {
       .update({
         google_sheet_synced_at:   sheet.ok ? new Date().toISOString() : null,
         google_sheet_retry_count: sheetRetryCount,
+        sheet_status:             sheet.ok ? "synced" : "failed",
+        sheet_error:              sheet.ok ? null : ((sheet as SyncResult).error ?? "sync_failed").slice(0, 200),
+        sheet_attempts:           1 + sheetRetryCount,
+        sheet_synced_at:          sheet.ok ? new Date().toISOString() : null,
         purchase_event_id:        capiEventId,
         ...(canSendCapi ? {} : { capi_status: "skipped" }),
       })
@@ -355,6 +364,41 @@ export async function POST(req: NextRequest) {
       }
     } else if (pixelId && !accessToken) {
       console.log("[Meta CAPI] META_ACCESS_TOKEN not set - browser Pixel only for order", newOrder.id);
+    }
+
+    // -- CAPI Lead for WhatsApp leads - fire-and-forget, NEVER Purchase ---------
+    // event_id = lead_<database_order_id>
+    if (whatsappLead && pixelId && accessToken) {
+      Promise.resolve().then(async () => {
+        try {
+          const { sendCapiLead } = await import("@/lib/meta-capi");
+          const leadResult = await withTimeout(
+            sendCapiLead({
+              pixelId,
+              accessToken,
+              orderId:        newOrder.id,
+              phone:          order.phone,
+              firstName:      String(order.customer_first_name ?? "").trim() || undefined,
+              lastName:       String(order.customer_last_name ?? "").trim() || undefined,
+              city:           order.city,
+              clientIp:       getClientIp(req),
+              userAgent:      req.headers.get("user-agent") || undefined,
+              fbp:            metaTracking.fbp,
+              fbc:            fbcEnriched,
+              eventSourceUrl: metaTracking.event_source_url || metaTracking.landing_page,
+            }),
+            6000,
+            { ok: false, error: "lead_timeout" }
+          );
+          if (leadResult.ok) {
+            console.log(`[Meta CAPI] Lead sent order_id=${newOrder.id} event_id=lead_${newOrder.id}`);
+          } else {
+            console.warn(`[Meta CAPI] Lead failed order_id=${newOrder.id} error=${leadResult.error ?? "unknown"}`);
+          }
+        } catch (err) {
+          console.warn("[Meta CAPI] Lead top-level error", newOrder.id, String(err).slice(0, 150));
+        }
+      });
     }
 
     // -- WhatsApp Admin Notification - fire-and-forget --------------------------

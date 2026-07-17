@@ -13,6 +13,54 @@ interface EnvStatus {
   sheetIdWarning?: string | null;
 }
 
+interface ReconRow {
+  order_id: string;
+  created_at: string;
+  source: string;
+  status: string;
+  category: string;
+  reason: string;
+  customer: string;
+  total: number;
+  in_sheet: boolean;
+  sheet_status: string | null;
+  capi_status: string | null;
+  meta_purchase_sent: boolean;
+  safe_to_sync: boolean;
+}
+
+interface ReconSummary {
+  total_db_orders: number;
+  valid_real_orders: number;
+  whatsapp_leads: number;
+  test_orders: number;
+  admin_orders: number;
+  cancelled_orders: number;
+  invalid_orders: number;
+  missing_from_sheet: number;
+  sheet_only_rows: number;
+  pixel_eligible: number;
+  capi_sent: number;
+  capi_failed: number;
+  capi_pending: number;
+  capi_skipped: number;
+  sheet_synced: number;
+  sheet_failed: number;
+  safe_to_sync: number;
+  missing_oldest: string | null;
+  missing_newest: string | null;
+  missing_by_category: Record<string, number>;
+}
+
+const CATEGORY_LABELS: Record<string, string> = {
+  real_cod:      "طلب COD حقيقي",
+  whatsapp_lead: "WhatsApp lead",
+  test:          "تجريبي",
+  admin:         "أنشئ يدوياً",
+  cancelled:     "ملغي/مرفوض",
+  invalid:       "بيانات ناقصة",
+};
+
 export default function AdminGoogleSheetsPage() {
   const [form, setForm] = useState({
     enabled: false,
@@ -45,15 +93,20 @@ export default function AdminGoogleSheetsPage() {
     total: number;
     trackingTab: boolean;
   } | null>(null);
-  const [comparing, setComparing] = useState(false);
-  const [fixingMissing, setFixingMissing] = useState(false);
-  const [compareResult, setCompareResult] = useState<{
-    db_count: number;
-    sheet_count: number;
-    missing: { order_id: string; customer: string; total: number; source: string; created_at: string }[];
+  const [reconciling, setReconciling] = useState(false);
+  const [syncingSelected, setSyncingSelected] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [filterCategory, setFilterCategory] = useState<string>("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [reconcileData, setReconcileData] = useState<{
+    summary: ReconSummary;
+    missing: ReconRow[];
+    sheet_only_ids: string[];
   } | null>(null);
-  const [fixResult, setFixResult] = useState<{
+  const [syncSelResult, setSyncSelResult] = useState<{
     synced: number;
+    skipped_existing: number;
     failed: number;
     failures?: { order_id: string; error: string }[];
   } | null>(null);
@@ -201,66 +254,95 @@ export default function AdminGoogleSheetsPage() {
     setRebuilding(false);
   };
 
-  // مقارنة وإصلاح Google Sheet — compare DB orders vs sheet, sync only missing
-  const compareSheet = async () => {
+  // ── نظام المطابقة الدائم — Supabase هو مصدر الحقيقة ──
+  // GET  = تحليل فقط (Dry Run) — لا يكتب في الورقة ولا يرسل لـ Meta
+  // POST = مزامنة الطلبات المحددة يدوياً فقط — بدون تكرار وبدون أحداث Meta
+  const runReconcile = async () => {
     if (!canTest) { toast.error("Google Sheets غير مهيأ"); return; }
     if (!HAS_SUPABASE) { toast.error("خاصك تربط Supabase"); return; }
-    setComparing(true);
-    setCompareResult(null);
-    setFixResult(null);
+    setReconciling(true);
+    setReconcileData(null);
+    setSyncSelResult(null);
+    setSelectedIds([]);
     try {
-      const r = await fetch("/api/admin/google-sheets/compare", { credentials: "include" });
-      if (r.status === 401) { toast.error("الجلسة منتهية — سجل الدخول من جديد في صفحة /admin/login"); setComparing(false); return; }
-      if (r.status === 403) { toast.error("هذا الحساب غير مصرح له بالوصول"); setComparing(false); return; }
+      const r = await fetch("/api/admin/reconcile", { credentials: "include" });
+      if (r.status === 401) { toast.error("الجلسة منتهية — سجل الدخول من جديد في /admin/login"); setReconciling(false); return; }
+      if (r.status === 403) { toast.error("هذا الحساب غير مصرح له بالوصول"); setReconciling(false); return; }
       const d = await r.json() as {
         success: boolean;
         error?: string;
-        db_count?: number;
-        sheet_count?: number;
-        missing?: { order_id: string; customer: string; total: number; source: string; created_at: string }[];
+        summary?: ReconSummary;
+        missing?: ReconRow[];
+        sheet_only_ids?: string[];
       };
-      if (d.success) {
-        setCompareResult({
-          db_count:    d.db_count ?? 0,
-          sheet_count: d.sheet_count ?? 0,
-          missing:     d.missing ?? [],
+      if (d.success && d.summary) {
+        setReconcileData({
+          summary:        d.summary,
+          missing:        d.missing ?? [],
+          sheet_only_ids: d.sheet_only_ids ?? [],
         });
-        if ((d.missing?.length ?? 0) === 0) toast.success("كل الطلبات موجودة في الورقة");
-        else toast(`${d.missing!.length} طلب ناقص في الورقة`, { icon: "⚠️" });
+        toast.success("تم التحليل (Dry Run) — لم يتم تعديل أي شيء");
       } else {
-        toast.error(d.error || "خطأ في المقارنة");
+        toast.error(d.error || "خطأ في التحليل");
       }
     } catch { toast.error("خطأ في الاتصال"); }
-    setComparing(false);
+    setReconciling(false);
   };
 
-  const fixMissing = async () => {
-    if (!compareResult || compareResult.missing.length === 0) return;
-    if (!confirm(`سيتم إرسال ${compareResult.missing.length} طلب ناقص إلى Google Sheet. الطلبات الموجودة لن تتكرر. هل تريد المتابعة؟`)) return;
-    setFixingMissing(true);
-    setFixResult(null);
+  const visibleMissing = (reconcileData?.missing ?? []).filter((m) => {
+    if (filterCategory !== "all" && m.category !== filterCategory) return false;
+    const day = m.created_at.slice(0, 10);
+    if (dateFrom && day < dateFrom) return false;
+    if (dateTo && day > dateTo) return false;
+    return true;
+  });
+
+  const toggleId = (id: string) =>
+    setSelectedIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+
+  const syncSelected = async () => {
+    if (selectedIds.length === 0) { toast.error("اختر الطلبات أولاً"); return; }
+    if (!confirm(
+      `سيتم إرسال ${selectedIds.length} طلب محدد إلى Google Sheet فقط.\n` +
+      `- لن يتم إرسال أي حدث Purchase أو Lead إلى Meta.\n` +
+      `- الطلبات الموجودة مسبقاً في الورقة يتم تجاهلها تلقائياً.\n` +
+      `هل تريد المتابعة؟`
+    )) return;
+    setSyncingSelected(true);
+    setSyncSelResult(null);
     try {
-      const r = await fetch("/api/admin/google-sheets/compare", { method: "POST", credentials: "include" });
-      if (r.status === 401) { toast.error("الجلسة منتهية — سجل الدخول من جديد في صفحة /admin/login"); setFixingMissing(false); return; }
-      if (r.status === 403) { toast.error("هذا الحساب غير مصرح له بالوصول"); setFixingMissing(false); return; }
+      const r = await fetch("/api/admin/reconcile", {
+        method:      "POST",
+        credentials: "include",
+        headers:     { "Content-Type": "application/json" },
+        body:        JSON.stringify({ order_ids: selectedIds }),
+      });
+      if (r.status === 401) { toast.error("الجلسة منتهية — سجل الدخول من جديد في /admin/login"); setSyncingSelected(false); return; }
+      if (r.status === 403) { toast.error("هذا الحساب غير مصرح له بالوصول"); setSyncingSelected(false); return; }
       const d = await r.json() as {
         success: boolean;
         error?: string;
         synced?: number;
+        skipped_existing?: number;
         failed?: number;
         failures?: { order_id: string; error: string }[];
       };
       if (d.success) {
-        setFixResult({ synced: d.synced ?? 0, failed: d.failed ?? 0, failures: d.failures });
-        if ((d.failed ?? 0) === 0) toast.success(`تمت مزامنة ${d.synced ?? 0} طلب ناقص`);
+        setSyncSelResult({
+          synced:           d.synced ?? 0,
+          skipped_existing: d.skipped_existing ?? 0,
+          failed:           d.failed ?? 0,
+          failures:         d.failures,
+        });
+        if ((d.failed ?? 0) === 0) toast.success(`تمت مزامنة ${d.synced ?? 0} طلب — بدون أحداث Meta`);
         else toast.error(`${d.synced} نجح، ${d.failed} فشل`);
-        // Refresh the comparison after fixing
-        setCompareResult(null);
+        setSelectedIds([]);
+        setReconcileData(null); // إعادة التحليل مطلوبة بعد المزامنة
       } else {
-        toast.error(d.error || "خطأ في الإصلاح");
+        toast.error(d.error || "خطأ في المزامنة");
       }
     } catch { toast.error("خطأ في الاتصال"); }
-    setFixingMissing(false);
+    setSyncingSelected(false);
   };
 
   const detectRepair = async (mode: "detect" | "fix") => {
@@ -519,75 +601,172 @@ export default function AdminGoogleSheetsPage() {
         </button>
       </div>
 
-      {/* Compare + fix missing orders */}
+      {/* Reconciliation — Supabase is the source of truth */}
       <div className="bg-white border border-gray-200 p-5 mb-4">
-        <h2 className="font-black text-brand-navy mb-1">مقارنة وإصلاح Google Sheet</h2>
+        <h2 className="font-black text-brand-navy mb-1">نظام المطابقة — Supabase هو مصدر الحقيقة</h2>
         <p className="text-brand-gray text-sm mb-4">
-          يقارن الطلبات في قاعدة البيانات مع الورقة، ويظهر الطلبات الناقصة، ثم يزامن الناقص فقط بدون تكرار.
+          الخطوة 1: تحليل فقط (Dry Run) — يصنف كل الطلبات بدون أي تعديل. الخطوة 2: اختر بنفسك الطلبات الناقصة وزامنها — بدون تكرار وبدون أي أحداث Meta.
         </p>
 
-        {compareResult && (
-          <div className={"mb-4 p-3 border text-sm " + (compareResult.missing.length === 0 ? "bg-green-50 border-green-200 text-green-800" : "bg-yellow-50 border-yellow-200 text-yellow-800")}>
-            <p className="font-bold mb-1">
-              قاعدة البيانات: {compareResult.db_count} طلب — الورقة: {compareResult.sheet_count} صف — الناقص: {compareResult.missing.length}
+        <button
+          onClick={runReconcile}
+          disabled={reconciling || syncingSelected || !canTest || !HAS_SUPABASE}
+          className="flex items-center gap-2 bg-brand-navy text-white font-bold px-5 py-2.5 text-sm hover:bg-opacity-85 disabled:opacity-50 transition-colors mb-4"
+        >
+          <RefreshCw className={"h-4 w-4 " + (reconciling ? "animate-spin" : "")} />
+          {reconciling ? "جاري التحليل..." : "تحليل ومطابقة (Dry Run — بدون تعديل)"}
+        </button>
+
+        {reconcileData && (
+          <div className="space-y-4">
+            {/* Summary */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+              <div className="border border-gray-200 p-2"><p className="font-bold text-brand-navy">{reconcileData.summary.total_db_orders}</p><p className="text-brand-gray">كل طلبات قاعدة البيانات</p></div>
+              <div className="border border-green-200 bg-green-50 p-2"><p className="font-bold text-green-700">{reconcileData.summary.valid_real_orders}</p><p className="text-brand-gray">طلبات COD حقيقية</p></div>
+              <div className="border border-blue-200 bg-blue-50 p-2"><p className="font-bold text-blue-700">{reconcileData.summary.whatsapp_leads}</p><p className="text-brand-gray">WhatsApp leads</p></div>
+              <div className="border border-gray-200 p-2"><p className="font-bold text-brand-navy">{reconcileData.summary.test_orders + reconcileData.summary.admin_orders}</p><p className="text-brand-gray">تجريبي / يدوي</p></div>
+              <div className="border border-orange-200 bg-orange-50 p-2"><p className="font-bold text-orange-700">{reconcileData.summary.cancelled_orders}</p><p className="text-brand-gray">ملغي / مرفوض</p></div>
+              <div className="border border-red-200 bg-red-50 p-2"><p className="font-bold text-red-700">{reconcileData.summary.missing_from_sheet}</p><p className="text-brand-gray">ناقص في الورقة</p></div>
+              <div className="border border-red-200 bg-red-50 p-2"><p className="font-bold text-red-700">{reconcileData.summary.sheet_only_rows}</p><p className="text-brand-gray">في الورقة فقط (بدون DB)</p></div>
+              <div className="border border-green-200 bg-green-50 p-2"><p className="font-bold text-green-700">{reconcileData.summary.safe_to_sync}</p><p className="text-brand-gray">آمن للمزامنة</p></div>
+              <div className="border border-gray-200 p-2"><p className="font-bold text-brand-navy">{reconcileData.summary.pixel_eligible}</p><p className="text-brand-gray">مؤهل لـ Meta Purchase</p></div>
+              <div className="border border-green-200 bg-green-50 p-2"><p className="font-bold text-green-700">{reconcileData.summary.capi_sent}</p><p className="text-brand-gray">CAPI مرسل</p></div>
+              <div className="border border-red-200 bg-red-50 p-2"><p className="font-bold text-red-700">{reconcileData.summary.capi_failed}</p><p className="text-brand-gray">CAPI فاشل</p></div>
+              <div className="border border-yellow-200 bg-yellow-50 p-2"><p className="font-bold text-yellow-700">{reconcileData.summary.capi_pending}</p><p className="text-brand-gray">CAPI معلق</p></div>
+            </div>
+
+            {(reconcileData.summary.missing_oldest || reconcileData.summary.missing_newest) && (
+              <p className="text-xs text-brand-gray">
+                الطلبات الناقصة: من <span dir="ltr">{reconcileData.summary.missing_oldest?.slice(0, 10)}</span> إلى <span dir="ltr">{reconcileData.summary.missing_newest?.slice(0, 10)}</span>
+                {" — "}
+                COD حقيقي: {reconcileData.summary.missing_by_category.real_cod ?? 0}،
+                WhatsApp: {reconcileData.summary.missing_by_category.whatsapp_lead ?? 0}،
+                تجريبي: {reconcileData.summary.missing_by_category.test ?? 0}،
+                يدوي: {reconcileData.summary.missing_by_category.admin ?? 0}،
+                ملغي: {reconcileData.summary.missing_by_category.cancelled ?? 0}،
+                بيانات ناقصة: {reconcileData.summary.missing_by_category.invalid ?? 0}
+              </p>
+            )}
+
+            {reconcileData.sheet_only_ids.length > 0 && (
+              <div className="border border-yellow-200 bg-yellow-50 p-3 text-xs text-yellow-800">
+                <p className="font-bold mb-1">صفوف موجودة في الورقة فقط وليس في قاعدة البيانات ({reconcileData.sheet_only_ids.length}):</p>
+                <p className="font-mono break-all">{reconcileData.sheet_only_ids.slice(0, 10).join("، ")}{reconcileData.sheet_only_ids.length > 10 ? " ..." : ""}</p>
+                <p className="mt-1">هذه الصفوف لا يتم حذفها تلقائياً — راجعها يدوياً.</p>
+              </div>
+            )}
+
+            {/* Filters */}
+            {reconcileData.missing.length > 0 && (
+              <>
+                <div className="flex flex-wrap items-end gap-2 text-xs">
+                  <div>
+                    <label className="block font-bold text-brand-navy mb-1">التصنيف</label>
+                    <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} className="border border-gray-300 px-2 py-1.5">
+                      <option value="all">الكل ({reconcileData.missing.length})</option>
+                      <option value="real_cod">COD حقيقي</option>
+                      <option value="whatsapp_lead">WhatsApp lead</option>
+                      <option value="test">تجريبي</option>
+                      <option value="admin">يدوي</option>
+                      <option value="cancelled">ملغي</option>
+                      <option value="invalid">بيانات ناقصة</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-bold text-brand-navy mb-1">من تاريخ</label>
+                    <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="border border-gray-300 px-2 py-1" dir="ltr" />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-brand-navy mb-1">إلى تاريخ</label>
+                    <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="border border-gray-300 px-2 py-1" dir="ltr" />
+                  </div>
+                  <button onClick={() => setSelectedIds(visibleMissing.filter((m) => m.safe_to_sync).map((m) => m.order_id))} className="border border-green-600 text-green-700 font-bold px-3 py-1.5 hover:bg-green-50">
+                    اختيار الآمن فقط ({visibleMissing.filter((m) => m.safe_to_sync).length})
+                  </button>
+                  <button onClick={() => setSelectedIds(visibleMissing.map((m) => m.order_id))} className="border border-brand-navy text-brand-navy font-bold px-3 py-1.5 hover:bg-gray-50">
+                    اختيار الكل المعروض ({visibleMissing.length})
+                  </button>
+                  <button onClick={() => setSelectedIds([])} className="border border-gray-300 text-brand-gray font-bold px-3 py-1.5 hover:bg-gray-50">
+                    إلغاء الاختيار
+                  </button>
+                </div>
+
+                {/* Missing orders table */}
+                <div className="border border-gray-200 max-h-96 overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-brand-light sticky top-0">
+                      <tr className="text-right">
+                        <th className="p-2 w-8"></th>
+                        <th className="p-2">التاريخ</th>
+                        <th className="p-2">الزبون</th>
+                        <th className="p-2">المجموع</th>
+                        <th className="p-2">المصدر</th>
+                        <th className="p-2">الحالة</th>
+                        <th className="p-2">التصنيف</th>
+                        <th className="p-2">CAPI</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleMissing.map((m) => (
+                        <tr key={m.order_id} className={"border-t border-gray-100 " + (selectedIds.includes(m.order_id) ? "bg-blue-50" : "")}>
+                          <td className="p-2">
+                            <input type="checkbox" checked={selectedIds.includes(m.order_id)} onChange={() => toggleId(m.order_id)} className="accent-brand-gold" />
+                          </td>
+                          <td className="p-2 whitespace-nowrap" dir="ltr">{m.created_at.slice(0, 16).replace("T", " ")}</td>
+                          <td className="p-2">{m.customer || "—"}</td>
+                          <td className="p-2 whitespace-nowrap">{m.total} د</td>
+                          <td className="p-2 font-mono">{m.source}</td>
+                          <td className="p-2">{m.status}</td>
+                          <td className="p-2">
+                            <span className={
+                              m.category === "real_cod" ? "text-green-700 font-bold" :
+                              m.category === "whatsapp_lead" ? "text-blue-700" :
+                              m.category === "cancelled" ? "text-orange-700" : "text-red-600"
+                            } title={m.reason}>
+                              {CATEGORY_LABELS[m.category] ?? m.category}
+                            </span>
+                          </td>
+                          <td className="p-2 font-mono">{m.capi_status ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <button
+                  onClick={syncSelected}
+                  disabled={syncingSelected || selectedIds.length === 0}
+                  className="flex items-center gap-2 bg-brand-gold text-white font-bold px-5 py-2.5 text-sm hover:bg-opacity-85 disabled:opacity-50 transition-colors"
+                >
+                  <Wrench className={"h-4 w-4 " + (syncingSelected ? "animate-spin" : "")} />
+                  {syncingSelected ? "جاري المزامنة..." : `مزامنة ${selectedIds.length} طلب محدد إلى الورقة (بدون Meta)`}
+                </button>
+              </>
+            )}
+
+            {reconcileData.missing.length === 0 && (
+              <div className="border border-green-200 bg-green-50 p-3 text-sm text-green-800 font-bold">
+                كل طلبات قاعدة البيانات موجودة في الورقة — لا يوجد نقص
+              </div>
+            )}
+          </div>
+        )}
+
+        {syncSelResult && (
+          <div className={"mt-4 p-3 border text-sm " + (syncSelResult.failed === 0 ? "bg-green-50 border-green-200 text-green-800" : "bg-red-50 border-red-200 text-red-800")}>
+            <p className="font-bold">
+              تمت المزامنة: {syncSelResult.synced} نجح، {syncSelResult.skipped_existing} موجود مسبقاً (تم تجاهله)، {syncSelResult.failed} فشل — أحداث Meta المرسلة: 0
             </p>
-            {compareResult.missing.length > 0 && (
-              <ul className="text-xs space-y-0.5 mt-2">
-                {compareResult.missing.map((m) => (
-                  <li key={m.order_id} className="border-b border-yellow-100 pb-1 last:border-0">
-                    <span className="font-mono">{m.order_id.slice(0, 8)}…</span>
-                    {" — "}
-                    <span className="font-bold">{m.customer || "بدون اسم"}</span>
-                    {" — "}
-                    <span>{m.total} درهم</span>
-                    {" — "}
-                    <span className="font-mono text-yellow-700">[{m.source}]</span>
-                    {" — "}
-                    <span dir="ltr">{m.created_at ? new Date(m.created_at).toLocaleString("ar-MA") : ""}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
-
-        {fixResult && (
-          <div className={"mb-4 p-3 border text-sm " + (fixResult.failed === 0 ? "bg-green-50 border-green-200 text-green-800" : "bg-red-50 border-red-200 text-red-800")}>
-            <p className="font-bold">تمت المزامنة: {fixResult.synced} نجح، {fixResult.failed} فشل</p>
-            {fixResult.failures && fixResult.failures.length > 0 && (
+            {syncSelResult.failures && syncSelResult.failures.length > 0 && (
               <ul className="text-xs mt-1 space-y-0.5">
-                {fixResult.failures.map((f) => (
-                  <li key={f.order_id}>
-                    <span className="font-mono">{f.order_id.slice(0, 8)}…</span> — {f.error}
-                  </li>
+                {syncSelResult.failures.map((fl) => (
+                  <li key={fl.order_id}><span className="font-mono">{fl.order_id.slice(0, 8)}…</span> — {fl.error}</li>
                 ))}
               </ul>
             )}
+            <p className="text-xs mt-1">أعد التحليل للتأكد من النتيجة النهائية.</p>
           </div>
         )}
-
-        <div className="flex gap-2 flex-wrap">
-          <button
-            onClick={compareSheet}
-            disabled={comparing || fixingMissing || !canTest || !HAS_SUPABASE}
-            title={!canTest ? "خاصك تهيئ Google Sheets أولاً" : ""}
-            className="flex items-center gap-2 border border-brand-navy text-brand-navy font-bold px-4 py-2 text-sm hover:bg-brand-navy hover:text-white disabled:opacity-50 transition-colors"
-          >
-            <RefreshCw className={"h-3.5 w-3.5 " + (comparing ? "animate-spin" : "")} />
-            {comparing ? "جاري المقارنة..." : "مقارنة الطلبات مع الورقة"}
-          </button>
-
-          {compareResult && compareResult.missing.length > 0 && (
-            <button
-              onClick={fixMissing}
-              disabled={fixingMissing || comparing}
-              className="flex items-center gap-2 bg-brand-gold text-white font-bold px-4 py-2 text-sm hover:bg-opacity-85 disabled:opacity-50 transition-colors"
-            >
-              <Wrench className={"h-3.5 w-3.5 " + (fixingMissing ? "animate-spin" : "")} />
-              {fixingMissing ? "جاري المزامنة..." : `مزامنة ${compareResult.missing.length} طلب ناقص`}
-            </button>
-          )}
-        </div>
       </div>
 
       {/* Bulk sync */}

@@ -36,3 +36,21 @@ SET meta_purchase_sent = true,
     capi_status        = COALESCE(NULLIF(capi_status, 'pending'), 'sent'),
     pixel_status       = COALESCE(pixel_status, 'fired')
 WHERE meta_purchase_sent IS DISTINCT FROM true;
+
+-- ============================================================
+-- Reconciliation system columns (integration status per order)
+-- ============================================================
+
+-- Google Sheets integration state machine: pending -> processing -> synced | failed
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS sheet_status    text DEFAULT 'pending';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS sheet_error     text;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS sheet_attempts  integer DEFAULT 0;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS sheet_synced_at timestamptz;
+
+-- CAPI attempt counter (capi_status state machine already added above)
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS capi_attempts   integer DEFAULT 0;
+
+-- Backfill sheet_status from the legacy google_sheet_synced flag
+UPDATE orders
+SET sheet_status = CASE WHEN google_sheet_synced = true THEN 'synced' ELSE COALESCE(sheet_status, 'pending') END
+WHERE sheet_status IS NULL OR sheet_status = 'pending';

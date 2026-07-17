@@ -538,9 +538,11 @@ export async function syncOrderToSheet(order: Order, config?: SyncConfig): Promi
     const { nextRow, existingIds } = await getNextEmptyRow(sheets, sheetId, sheetTitle);
     console.log(`[Google Sheets] next empty row: ${nextRow}`);
 
-    // Dedup: skip if this order_id is already in column A
-    if (order.id && existingIds.includes(order.id)) {
-      console.log(`[Google Sheets] order ${order.id} already synced, skipping`);
+    // Dedup: normalize the ID as a string and search the WHOLE ID column (A).
+    // The database order ID is the permanent deduplication key.
+    const normalizedId = String(order.id ?? "").trim();
+    if (normalizedId && existingIds.some((x) => String(x).trim() === normalizedId)) {
+      console.log(`[Google Sheets] order ${normalizedId} already in sheet, skipping (dedup)`);
       return { ok: true };
     }
 
