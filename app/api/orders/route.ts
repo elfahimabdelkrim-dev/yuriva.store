@@ -56,10 +56,10 @@ export async function POST(req: NextRequest) {
         if (det.detected) {
           order.city    = det.city;
           order.address = det.address || String(order.address);
-          console.log(`[City Detect] detected city="${det.city}"`);
+          console.log(`[City Detect] detected city="${det.city}" matchedBy=${det.matchedBy}`);
         } else {
           order.city = "غير محددة";
-          console.log("[City Detect] لم يتم التعرف على المدينة — full text kept as address");
+          console.log(`[City Detect] لم يتم التعرف على المدينة: ${String(order.address).slice(0, 120)}`);
         }
       }
     } catch (cityErr) {

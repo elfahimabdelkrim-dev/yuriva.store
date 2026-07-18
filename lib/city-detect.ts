@@ -562,61 +562,134 @@ export function normalizeCityText(input: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
+// ── Neighborhood aliases ─────────────────────────────────────────────────────
+// Matched ONLY when no explicit city / city alias is found in the text.
+// Explicit city always wins over neighborhood.
+// Values are normalized at module load (same normalizer as cities).
+const NEIGHBORHOOD_ALIASES: Record<string, string[]> = {
+  "Sale": [
+    "hay karima sale", "hay karima salé", "hay karima",
+    "حي كريمة سلا", "حي كريمة", "كريمة",
+  ],
+  "Casablanca": [
+    "hay hassani", "حي الحسني",
+    "ain diab", "عين الذئاب", "عين الذياب",
+    "maarif", "المعاريف", "معاريف",
+    "bernoussi", "sidi bernoussi", "البرنوصي", "سيدي البرنوصي",
+    "sidi maarouf", "سيدي معروف",
+    "hay salam casa", "حي السلام الدار البيضاء",
+  ],
+  "Tanger": [
+    "beni makada", "بني مكادة",
+  ],
+  "Rabat": [
+    "agdal", "اكدال", "أكدال",
+  ],
+};
+
 interface AliasEntry {
   canonical: string;
-  tokens: string[];  // normalized alias split into words
+  tokens: string[];                              // normalized alias words
+  kind: "city" | "alias" | "neighborhood";
 }
 
-// Sorted once at module load: longest alias first (more tokens, then more chars)
-const SORTED_ALIASES: AliasEntry[] = Object.entries(CITY_ALIASES)
-  .flatMap(([canonical, aliases]) =>
-    aliases.map((a) => ({ canonical, tokens: a.split(" ").filter(Boolean) }))
-  )
-  .filter((e) => e.tokens.length > 0)
-  .sort((a, b) =>
-    b.tokens.length - a.tokens.length ||
-    b.tokens.join(" ").length - a.tokens.join(" ").length
-  );
+function buildEntries(
+  source: Record<string, string[]>,
+  kindOf: (canonical: string, alias: string) => "city" | "alias" | "neighborhood"
+): AliasEntry[] {
+  return Object.entries(source)
+    .flatMap(([canonical, aliases]) =>
+      aliases.map((a) => {
+        const normalized = normalizeCityText(a);
+        return {
+          canonical,
+          tokens: normalized.split(" ").filter(Boolean),
+          kind: kindOf(canonical, normalized),
+        };
+      })
+    )
+    .filter((e) => e.tokens.length > 0)
+    .sort((a, b) =>
+      b.tokens.length - a.tokens.length ||
+      b.tokens.join(" ").length - a.tokens.join(" ").length
+    );
+}
+
+// Priority 1+2: explicit city names + city aliases (longest first)
+const CITY_ENTRIES: AliasEntry[] = buildEntries(CITY_ALIASES, (canonical, alias) =>
+  alias === normalizeCityText(canonical) ? "city" : "alias"
+);
+
+// Priority 3: neighborhoods (longest first) — used only if no city matched
+const NEIGHBORHOOD_ENTRIES: AliasEntry[] = buildEntries(NEIGHBORHOOD_ALIASES, () => "neighborhood");
 
 export interface CityDetectResult {
-  city: string;      // canonical city name ("" if not detected)
-  address: string;   // remaining address text
+  city: string;                                       // canonical city ("" if not detected)
+  address: string;                                    // remaining address text
   detected: boolean;
+  matchedBy: "city" | "alias" | "neighborhood" | "none";
+}
+
+function findMatch(
+  entries: AliasEntry[],
+  originalWords: string[],
+  normWords: string[]
+): { entry: AliasEntry; start: number; length: number } | null {
+  for (const entry of entries) {
+    const t = entry.tokens;
+    for (let i = 0; i + t.length <= normWords.length; i++) {
+      let match = true;
+      for (let j = 0; j < t.length; j++) {
+        if (normWords[i + j] !== t[j]) { match = false; break; }
+      }
+      if (match) return { entry, start: i, length: t.length };
+    }
+  }
+  return null;
 }
 
 /**
  * Detect a Moroccan city inside the free-text "المدينة والعنوان" field.
- * - Splits the text into words (original + normalized in parallel)
- * - Finds the longest alias token-sequence anywhere in the text
- *   (earliest occurrence wins among equal-length matches)
- * - Returns canonical city + the remaining words as the address
- * - NEVER throws: on any problem returns { detected: false, address: input }
+ *
+ * Priority:
+ *   1. explicit city name from the CATHEDIS list        (matchedBy: "city")
+ *   2. city aliases (casa, الدار البيضاء, ...)            (matchedBy: "alias")
+ *   3. neighborhood aliases (hay karima → Sale, ...)     (matchedBy: "neighborhood")
+ *   4. fallback: not detected                            (matchedBy: "none")
+ *
+ * Explicit city ALWAYS wins over neighborhood:
+ *   "Casablanca Hay Karima" → Casablanca (address keeps "Hay Karima")
+ *   "Hay Karima rue 12"     → Sale       (address = "rue 12")
+ *
+ * NEVER throws — on any problem returns { detected: false, address: input }.
  */
 export function detectCity(rawInput: string): CityDetectResult {
   const raw = String(rawInput ?? "").trim();
-  if (!raw) return { city: "", address: raw, detected: false };
+  if (!raw) return { city: "", address: raw, detected: false, matchedBy: "none" };
 
   try {
-    // split original text into words, keep parallel normalized words
     const originalWords = raw.split(/[\s,\u060c;\u061b.\/|-]+/).filter(Boolean);
     const normWords     = originalWords.map((w) => normalizeCityText(w));
 
-    for (const entry of SORTED_ALIASES) {
-      const t = entry.tokens;
-      for (let i = 0; i + t.length <= normWords.length; i++) {
-        let match = true;
-        for (let j = 0; j < t.length; j++) {
-          if (normWords[i + j] !== t[j]) { match = false; break; }
-        }
-        if (match) {
-          const remaining = [...originalWords.slice(0, i), ...originalWords.slice(i + t.length)]
-            .join(" ")
-            .trim();
-          return { city: entry.canonical, address: remaining, detected: true };
-        }
-      }
+    // Priority 1 + 2: cities and city aliases
+    const cityMatch = findMatch(CITY_ENTRIES, originalWords, normWords);
+    if (cityMatch) {
+      const { entry, start, length } = cityMatch;
+      const remaining = [...originalWords.slice(0, start), ...originalWords.slice(start + length)]
+        .join(" ").trim();
+      return { city: entry.canonical, address: remaining, detected: true, matchedBy: entry.kind };
+    }
+
+    // Priority 3: neighborhoods (only when no explicit city was written)
+    const hoodMatch = findMatch(NEIGHBORHOOD_ENTRIES, originalWords, normWords);
+    if (hoodMatch) {
+      const { entry, start, length } = hoodMatch;
+      const remaining = [...originalWords.slice(0, start), ...originalWords.slice(start + length)]
+        .join(" ").trim();
+      return { city: entry.canonical, address: remaining, detected: true, matchedBy: "neighborhood" };
     }
   } catch { /* never block the order on detection issues */ }
 
-  return { city: "", address: raw, detected: false };
+  // Priority 4: fallback
+  return { city: "", address: raw, detected: false, matchedBy: "none" };
 }
