@@ -45,6 +45,27 @@ export async function POST(req: NextRequest) {
     const { createAdminClient } = await import("@/lib/supabase/server");
     const supabase = createAdminClient();
 
+    // ── City auto-detection from the single "المدينة والعنوان" field ──
+    // The form has NO separate city field. The delivery-company city list
+    // (lib/city-detect.ts, from VILLE CATHEDIS.xlsx) detects the city and
+    // splits it out of the address. NEVER blocks or fails the order.
+    try {
+      if (!String(order.city ?? "").trim() && String(order.address ?? "").trim()) {
+        const { detectCity } = await import("@/lib/city-detect");
+        const det = detectCity(String(order.address));
+        if (det.detected) {
+          order.city    = det.city;
+          order.address = det.address || String(order.address);
+          console.log(`[City Detect] detected city="${det.city}"`);
+        } else {
+          order.city = "غير محددة";
+          console.log("[City Detect] لم يتم التعرف على المدينة — full text kept as address");
+        }
+      }
+    } catch (cityErr) {
+      console.warn("[City Detect] error (order continues):", String(cityErr).slice(0, 120));
+    }
+
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { data: recent } = await supabase
       .from("orders")
