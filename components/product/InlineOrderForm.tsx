@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, ShoppingBag } from "lucide-react";
-import type { Product, ProductColor } from "@/types";
+import type { Product } from "@/types";
 import { validateMoroccanPhone, formatPrice } from "@/lib/utils";
 import { siteConfig } from "@/config/site";
 import {
@@ -130,11 +130,8 @@ export default function InlineOrderForm({ product }: Props) {
   const [sizeError,    setSizeError]    = useState("");
   const quantity = 1;
 
-  const safeColors = Array.isArray(product.colors) ? product.colors : [];
-  const reqCount   = Math.max(1, Math.min(Number(product.required_color_count) || 1, 4));
-  const hasColors  = safeColors.length > 0;
-  const [selectedColors, setSelectedColors] = useState<ProductColor[]>([]);
-  const [colorError,     setColorError]     = useState("");
+  // Colors removed from the order form - product has no colors.
+  // The backend/Google Sheet "colors" column stays supported but empty.
 
   const [form,          setForm]          = useState<FormState>({ full_name: "", phone: "", address: "" });
   const [fieldErrors,   setFieldErrors]   = useState<Partial<Record<keyof FormState, string>>>({});
@@ -145,7 +142,10 @@ export default function InlineOrderForm({ product }: Props) {
   const clearErr = (field: keyof FormState) =>
     setFieldErrors((e) => ({ ...e, [field]: undefined }));
 
-  const safeSizes = Array.isArray(product.sizes) ? product.sizes : [];
+  const HIDDEN_SIZES = ["XS", "S"]; // hidden from the order form
+  const safeSizes = (Array.isArray(product.sizes) ? product.sizes : []).filter(
+    (s) => !HIDDEN_SIZES.includes(String(s).trim().toUpperCase())
+  );
   const total     = product.price * quantity;
 
   // ── WhatsApp mini-form state (NEW) ────────────────────────────────────────
@@ -169,27 +169,9 @@ export default function InlineOrderForm({ product }: Props) {
     setWaBackupUrl(null);
   };
 
-  // ── Color helpers ─────────────────────────────────────────────────────────
-  const toggleColor = (color: ProductColor) => {
-    setColorError("");
-    const alreadySelected = selectedColors.some((c) => c.name === color.name);
-    if (alreadySelected) {
-      setSelectedColors((prev) => prev.filter((c) => c.name !== color.name));
-    } else {
-      if (selectedColors.length >= reqCount) {
-        setColorError(reqCount === 1 ? "اختار لون واحد فقط" : `تقدر تختار غير ${reqCount} ألوان`);
-        return;
-      }
-      setSelectedColors((prev) => [...prev, color]);
-    }
-  };
-
-  const buildColorsJson = (): string =>
-    JSON.stringify(selectedColors.map((c, i) => ({ pieceIndex: i, color: c })));
-  const buildColorsParam = (): string =>
-    selectedColors.length > 1
-      ? selectedColors.map((c, i) => `${i + 1}: ${c.label}`).join("، ")
-      : selectedColors[0]?.label ?? "";
+  // Colors: always sent empty (safe for API, Google Sheet, and thank-you page)
+  const buildColorsJson  = (): string => "[]";
+  const buildColorsParam = (): string => "";
 
   // ── COD validation ────────────────────────────────────────────────────────
   const validate = (): boolean => {
@@ -200,13 +182,8 @@ export default function InlineOrderForm({ product }: Props) {
     let sizeOk = true;
     if (safeSizes.length > 0 && !selectedSize) { setSizeError("خاصك تختار القياس"); sizeOk = false; }
     else setSizeError("");
-    let colorOk = true;
-    if (hasColors && selectedColors.length < reqCount) {
-      setColorError(reqCount === 1 ? "اختار اللون" : `خاصك تختار ${reqCount} ألوان`);
-      colorOk = false;
-    } else setColorError("");
     setFieldErrors(errs);
-    return Object.keys(errs).length === 0 && sizeOk && colorOk;
+    return Object.keys(errs).length === 0 && sizeOk;
   };
 
   // ── COD submit (Buy Now) ──────────────────────────────────────────────────
@@ -402,6 +379,19 @@ export default function InlineOrderForm({ product }: Props) {
           </span>
         </div>
 
+        {/* Full name (COD) */}
+        <div>
+          <label className={lbl}>الاسم الكامل *</label>
+          <input
+            type="text"
+            className={inp}
+            placeholder="مثال: فاطمة العلوي"
+            value={form.full_name}
+            onChange={(e) => { set("full_name", e.target.value); clearErr("full_name"); }}
+          />
+          {fieldErrors.full_name && <p className={errCls}>{fieldErrors.full_name}</p>}
+        </div>
+
         {/* Size selector (COD) */}
         {safeSizes.length > 0 && (
           <div>
@@ -425,67 +415,6 @@ export default function InlineOrderForm({ product }: Props) {
             {sizeError && <p className={errCls}>{sizeError}</p>}
           </div>
         )}
-
-        {/* Color selector (COD) */}
-        {hasColors && (
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className={lbl + " mb-0"}>
-                {reqCount === 1 ? "اللون" : "الألوان"}
-              </label>
-              {reqCount > 1 && (
-                <span className="text-xs text-gray-500">
-                  {selectedColors.length === 0
-                    ? `اختار ${reqCount} ألوان`
-                    : `اخترت ${selectedColors.length} من ${reqCount}`}
-                </span>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {safeColors.map((color) => {
-                const isSelected = selectedColors.some((c) => c.name === color.name);
-                return (
-                  <button
-                    key={color.name}
-                    type="button"
-                    onClick={() => toggleColor(color)}
-                    title={color.label}
-                    className={`flex items-center gap-1.5 px-3 py-2 border text-sm font-medium transition-all rounded-lg ${
-                      isSelected
-                        ? "border-brand-navy bg-brand-navy text-white"
-                        : "border-gray-300 text-gray-700 hover:border-brand-navy"
-                    }`}
-                  >
-                    <span
-                      className="w-4 h-4 rounded-full border border-white/50 shadow-sm flex-shrink-0"
-                      style={{ backgroundColor: color.hex }}
-                    />
-                    {color.label}
-                    {isSelected && reqCount > 1 && (
-                      <span className="text-[10px] font-bold opacity-75 mr-0.5">
-                        {selectedColors.findIndex((c) => c.name === color.name) + 1}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-            {colorError && <p className={errCls}>{colorError}</p>}
-          </div>
-        )}
-
-        {/* Full name (COD) */}
-        <div>
-          <label className={lbl}>الاسم الكامل *</label>
-          <input
-            type="text"
-            className={inp}
-            placeholder="مثال: فاطمة العلوي"
-            value={form.full_name}
-            onChange={(e) => { set("full_name", e.target.value); clearErr("full_name"); }}
-          />
-          {fieldErrors.full_name && <p className={errCls}>{fieldErrors.full_name}</p>}
-        </div>
 
         {/* Phone (COD) */}
         <div>
